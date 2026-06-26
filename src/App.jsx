@@ -160,14 +160,6 @@ export default function App() {
       (dbUsers || []).forEach(u => { usersObj[u.name] = u.password; });
       setUsers(usersObj);
 
-      // seed se banco vazio
-      if (!dbItems || dbItems.length === 0) {
-        setSeeding(true);
-        await seedDB(dbTeam && dbTeam.length > 0 ? dbTeam.map(r => r.name) : TEAM0);
-        setSeeding(false);
-        const fresh = await sb("items?order=id.asc");
-        setItems(fresh || []);
-      }
       setLoaded(true);
     } catch (e) {
       setDbError(e.message);
