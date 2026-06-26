@@ -1,4 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
+import {
+  Moon, Sun, ArrowUp, ArrowDown, ArrowLeftRight, ArrowUpDown, AlertTriangle,
+  Download, Circle, Pencil, Trash2,
+} from "lucide-react";
 
 const SUPABASE_URL = "https://aayayeytzaflbipqppwt.supabase.co";
 const SUPABASE_KEY = "sb_publishable__G4Ir20rpp9rC0qg-b5tpg_bU8ToqI-";
@@ -203,6 +207,11 @@ export default function App() {
   const btn = (bg, tx = "#fff") => ({ background: bg, border: "none", color: tx, padding: "6px 13px", borderRadius: 5, fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" });
   const ghost = () => ({ ...btn(T.panelAlt, T.text), border: `1px solid ${T.border}` });
   const sbtn = (c) => ({ background: `${c}14`, border: `1px solid ${c}28`, color: c, padding: "4px 9px", borderRadius: 4, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" });
+  const rowBtn = () => ({ width: 24, height: 24, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: 4, border: `1px solid ${T.border}`, background: "transparent", color: T.textFaint, cursor: "pointer" });
+  const rowBtnHover = (c) => ({
+    onMouseEnter: e => { e.currentTarget.style.background = `${c}14`; e.currentTarget.style.color = c; e.currentTarget.style.borderColor = `${c}40`; },
+    onMouseLeave: e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = T.textFaint; e.currentTarget.style.borderColor = T.border; },
+  });
   const mT = { margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: T.textBright };
   const lbl = (children) => <div style={{ fontSize: 10, fontWeight: 700, color: T.textFaint, marginBottom: 3, textTransform: "uppercase", letterSpacing: .6 }}>{children}</div>;
 
@@ -222,13 +231,13 @@ export default function App() {
   };
   const SortTh = ({ col, label, align }) => {
     const active = invSort.col === col;
+    const Icon = active ? (invSort.dir === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
     return <th onClick={() => setInvSort(p => p.col === col ? { col, dir: p.dir === "asc" ? "desc" : "asc" } : { col, dir: "asc" })}
       style={{ padding: "9px 12px", textAlign: align || "left", fontSize: 10, fontWeight: 700, color: active ? T.accent : T.textFaint, textTransform: "uppercase", letterSpacing: .7, cursor: "pointer", userSelect: "none", whiteSpace: "nowrap", background: T.th, borderBottom: `1px solid ${T.border}` }}>
-      {label}&nbsp;{active ? (invSort.dir === "asc" ? "↑" : "↓") : <span style={{ opacity: .25 }}>↕</span>}
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{label}<Icon size={11} strokeWidth={2.5} style={{ opacity: active ? 1 : .35 }} /></span>
     </th>;
   };
-  function MoonIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>; }
-  function SunIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4" /><line x1="12" y1="2" x2="12" y2="4" /><line x1="12" y1="20" x2="12" y2="22" /><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" /><line x1="2" y1="12" x2="4" y2="12" /><line x1="20" y1="12" x2="22" y2="12" /><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" /></svg>; }
+  const DirIcon = ({ dir, size = 12 }) => dir === "entrada" ? <ArrowUp size={size} strokeWidth={2.5} /> : dir === "transferencia" ? <ArrowLeftRight size={size} strokeWidth={2.5} /> : dir === "status" ? <Circle size={size - 4} fill="currentColor" /> : <ArrowDown size={size} strokeWidth={2.5} />;
 
   const showToast = (msg, type = "ok") => { setToast({ msg, type }); setTimeout(() => setToast(null), 2800); };
   const askConfirm = (message, onConfirm) => setConfirm({ message, onConfirm });
@@ -495,7 +504,7 @@ export default function App() {
 
   if (dbError) return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", alignItems: "center", justifyContent: "center", background: "#0c0d12", color: "#ef4444", fontFamily: "'DM Sans',sans-serif", fontSize: 13, gap: 10, padding: 20, textAlign: "center" }}>
-      <div style={{ fontSize: 24 }}>⚠️</div>
+      <AlertTriangle size={28} strokeWidth={1.75} />
       <div style={{ fontWeight: 700 }}>Erro ao conectar ao banco</div>
       <div style={{ color: "#8086a0", fontSize: 11, maxWidth: 400 }}>{dbError}</div>
       <button onClick={loadAll} style={{ marginTop: 10, background: "#4f86f7", border: "none", color: "#fff", padding: "8px 16px", borderRadius: 5, cursor: "pointer", fontFamily: "inherit" }}>Tentar novamente</button>
@@ -506,7 +515,7 @@ export default function App() {
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: T.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
       <button onClick={() => setTheme(t => t === "dark" ? "light" : "dark")} style={{ position: "fixed", top: 16, right: 16, width: 34, height: 34, borderRadius: 6, border: `1px solid ${T.border}`, background: T.panel, color: T.textMuted, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-        {theme === "dark" ? <MoonIcon /> : <SunIcon />}
+        {theme === "dark" ? <Moon size={16} /> : <Sun size={16} />}
       </button>
       <div style={{ background: T.panel, borderRadius: 8, padding: "32px 28px", width: "100%", maxWidth: 360, border: `1px solid ${T.border}` }}>
         <div style={{ marginBottom: 24 }}>
@@ -527,7 +536,7 @@ export default function App() {
         <button onClick={handleLogin} style={{ ...btn(T.accent), width: "100%", padding: "10px", fontSize: 13, marginTop: 4 }}>
           {loginForm.name && users[loginForm.name] === undefined ? "Criar senha e entrar" : "Entrar"}
         </button>
-        <div style={{ fontSize: 9, color: T.textFaint, marginTop: 14, textAlign: "center" }}>Dados sincronizados em tempo real via Supabase.</div>
+        <div style={{ fontSize: 9, color: T.textFaint, marginTop: 14, textAlign: "center" }}>Dados sincronizados em tempo real.</div>
       </div>
     </div>
   );
@@ -576,7 +585,6 @@ export default function App() {
               <div>
                 <span style={{ fontSize: 9, letterSpacing: 3, color: T.textFaint, fontWeight: 700, textTransform: "uppercase" }}>Inovacode</span>
                 <span style={{ fontSize: 14, fontWeight: 700, color: T.textBright, marginLeft: 10 }}>Inventário CBA</span>
-                <span style={{ fontSize: 9, color: "#22c55e", marginLeft: 8, background: "rgba(34,197,94,.1)", padding: "1px 6px", borderRadius: 3, fontWeight: 700 }}>● Supabase</span>
               </div>
               <div style={{ display: "flex" }}>
                 {[["dashboard", "Visão Geral"], ["inventario", "Inventário"], ["movimentacoes", "Movimentações"]].map(([v, l]) => (
@@ -588,9 +596,9 @@ export default function App() {
               <button onClick={() => setModal({ type: "add" })} style={btn(T.accent)}>+ Novo Item</button>
               <button onClick={() => { setBatchQtys({}); setModal({ type: "batch" }); }} style={ghost()}>Lote</button>
               <button onClick={() => setModal({ type: "reports" })} style={ghost()}>Relatórios</button>
-              <button onClick={() => setTheme(t => t === "dark" ? "light" : "dark")} style={{ ...ghost(), padding: "6px 8px", display: "flex", alignItems: "center" }}>{theme === "dark" ? <MoonIcon /> : <SunIcon />}</button>
-              <button onClick={() => { if (currentUser === ADMIN) setModal({ type: "team" }); }} style={{ fontSize: 11, color: T.accent, background: `${T.accent}15`, padding: "4px 9px", borderRadius: 4, fontWeight: 600, border: "none", cursor: currentUser === ADMIN ? "pointer" : "default" }}>
-                {currentUser}{currentUser === ADMIN ? " · admin" : ""}
+              <button onClick={() => setTheme(t => t === "dark" ? "light" : "dark")} style={{ ...ghost(), padding: "6px 8px", display: "flex", alignItems: "center" }}>{theme === "dark" ? <Moon size={16} /> : <Sun size={16} />}</button>
+              <button onClick={() => { if (currentUser === ADMIN) setModal({ type: "team" }); }} style={{ fontSize: 11, color: T.textMuted, background: "none", padding: "4px 2px", fontWeight: 600, border: "none", cursor: currentUser === ADMIN ? "pointer" : "default" }}>
+                {currentUser}{currentUser === ADMIN ? <span style={{ color: T.textFaint, fontWeight: 500 }}> · admin</span> : ""}
               </button>
               <button onClick={handleLogout} style={{ ...ghost(), padding: "5px 8px", color: T.textFaint }}>Sair</button>
             </div>
@@ -629,8 +637,8 @@ export default function App() {
                 const mc = isIn ? "#22c55e" : isTr ? "#8b5cf6" : isSt ? T.textFaint : "#ef4444";
                 return (
                   <div key={m.id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "10px 16px", borderBottom: `1px solid ${T.borderSoft}` }}>
-                    <div style={{ width: 28, height: 28, borderRadius: 5, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `${mc}15`, color: mc, fontSize: 11, fontWeight: 700 }}>
-                      {isIn ? "↑" : isTr ? "⇄" : isSt ? "·" : "↓"}
+                    <div style={{ width: 28, height: 28, borderRadius: 5, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `${mc}15`, color: mc }}>
+                      <DirIcon dir={m.dir} />
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 12, fontWeight: 500, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.item_name}</div>
@@ -757,9 +765,9 @@ export default function App() {
                       <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "'DM Mono',monospace", fontSize: 12, color: T.textFaint }}>{item.min_stock}</td>
                       <td style={{ padding: "10px 12px" }} onClick={e => e.stopPropagation()}>
                         <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-                          <button onClick={() => { setModal({ type: "mov", item, dir: "entrada" }); setForm({ dir: "entrada" }); }} style={sbtn("#22c55e")}>↑</button>
-                          <button onClick={() => { setModal({ type: "mov", item, dir: "saida" }); setForm({ dir: "saida" }); }} style={sbtn("#ef4444")}>↓</button>
-                          <button onClick={() => { setModal({ type: "mov", item, dir: "transferencia" }); setForm({ dir: "transferencia" }); }} style={sbtn("#8b5cf6")}>⇄</button>
+                          <button title="Entrada" onClick={() => { setModal({ type: "mov", item, dir: "entrada" }); setForm({ dir: "entrada" }); }} style={rowBtn()} {...rowBtnHover("#22c55e")}><ArrowUp size={13} strokeWidth={2.25} /></button>
+                          <button title="Saída" onClick={() => { setModal({ type: "mov", item, dir: "saida" }); setForm({ dir: "saida" }); }} style={rowBtn()} {...rowBtnHover("#ef4444")}><ArrowDown size={13} strokeWidth={2.25} /></button>
+                          <button title="Transferir" onClick={() => { setModal({ type: "mov", item, dir: "transferencia" }); setForm({ dir: "transferencia" }); }} style={rowBtn()} {...rowBtnHover("#8b5cf6")}><ArrowLeftRight size={13} strokeWidth={2.25} /></button>
                         </div>
                       </td>
                     </tr>
@@ -814,8 +822,8 @@ export default function App() {
               const mc = isIn ? "#22c55e" : isTr ? "#8b5cf6" : isSt ? T.textFaint : "#ef4444";
               return (
                 <div key={m.id} style={{ display: "flex", flexWrap: "wrap", gap: "6px 10px", alignItems: "center", padding: "10px 14px", borderBottom: `1px solid ${T.borderSoft}` }}>
-                  <div style={{ width: 32, height: 32, borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center", background: `${mc}14`, color: mc, fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
-                    {isIn ? "↑" : isTr ? "⇄" : isSt ? "·" : "↓"}
+                  <div style={{ width: 32, height: 32, borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center", background: `${mc}14`, color: mc, flexShrink: 0 }}>
+                    <DirIcon dir={m.dir} size={14} />
                   </div>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 12, color: T.text }}>{m.item_name}</div>
@@ -842,7 +850,7 @@ export default function App() {
       {modal?.type === "team" && currentUser === ADMIN && (
         <Overlay onClose={() => setModal(null)} wide>
           <h3 style={mT}>Gerenciar Equipe</h3>
-          <p style={{ fontSize: 11, color: T.textMuted, marginBottom: 16 }}>Dados salvos no Supabase.</p>
+          <p style={{ fontSize: 11, color: T.textMuted, marginBottom: 16 }}>Alterações são sincronizadas para toda a equipe.</p>
           {lbl("Adicionar membro")}
           <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
             <input value={newMember} onChange={e => setNewMember(e.target.value)} placeholder="Nome completo" style={inp({ marginBottom: 0, flex: 1 })} onKeyDown={e => e.key === "Enter" && addMember()} />
@@ -852,7 +860,13 @@ export default function App() {
           <div style={{ maxHeight: 300, overflowY: "auto" }}>
             {team.map(name => (
               <div key={name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 10px", background: T.panelAlt, borderRadius: 5, marginBottom: 4 }}>
-                <div style={{ fontSize: 12, color: T.text }}>{name}{users[name] !== undefined ? <span style={{ fontSize: 9, color: "#22c55e", marginLeft: 8 }}>● ativo</span> : <span style={{ fontSize: 9, color: T.textFaint, marginLeft: 8 }}>○ aguardando</span>}</div>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: T.text }}>
+                  {name}
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 9, color: users[name] !== undefined ? "#22c55e" : T.textFaint }}>
+                    <span style={{ width: 5, height: 5, borderRadius: "50%", background: users[name] !== undefined ? "#22c55e" : T.textGhost, display: "inline-block" }} />
+                    {users[name] !== undefined ? "ativo" : "aguardando"}
+                  </span>
+                </div>
                 {name !== ADMIN && <button onClick={() => removeMember(name)} style={sbtn("#ef4444")}>Remover</button>}
               </div>
             ))}
@@ -873,7 +887,7 @@ export default function App() {
                 <div style={{ fontSize: 12, fontWeight: 600, color: T.textBright }}>{r.label}</div>
                 <div style={{ fontSize: 10, color: T.textFaint }}>{r.sub}</div>
               </div>
-              <span style={{ fontSize: 13, color: r.c }}>↓</span>
+              <Download size={15} style={{ color: r.c }} />
             </button>
           ))}
         </Overlay>
@@ -1013,7 +1027,7 @@ export default function App() {
               {iMovs.length === 0 && <div style={{ fontSize: 11, color: T.textFaint }}>Sem movimentações.</div>}
               {iMovs.map(m => (
                 <div key={m.id} style={{ padding: "6px 0", borderBottom: `1px solid ${T.borderSoft}`, fontSize: 11, display: "flex", gap: 8, alignItems: "baseline" }}>
-                  <span style={{ color: m.dir === "entrada" ? "#22c55e" : m.dir === "transferencia" ? "#8b5cf6" : m.dir === "saida" ? "#ef4444" : T.textFaint, fontWeight: 700, minWidth: 30, fontFamily: "'DM Mono',monospace" }}>{m.dir === "entrada" ? "+" : m.dir === "saida" ? "-" : m.dir === "transferencia" ? "⇄" : ""}{m.qty || ""}</span>
+                  <span style={{ display: "inline-flex", alignItems: "baseline", gap: 1, color: m.dir === "entrada" ? "#22c55e" : m.dir === "transferencia" ? "#8b5cf6" : m.dir === "saida" ? "#ef4444" : T.textFaint, fontWeight: 700, minWidth: 30, fontFamily: "'DM Mono',monospace" }}>{m.dir === "transferencia" ? <ArrowLeftRight size={11} strokeWidth={2.5} /> : m.dir === "entrada" ? "+" : m.dir === "saida" ? "-" : ""}{m.qty || ""}</span>
                   <span style={{ color: T.textMuted }}>{m.tipo}</span>
                   <span style={{ color: T.textFaint }}>· {m.resp}</span>
                   {m.obs && <span style={{ color: T.textFaint, fontStyle: "italic" }}>— {m.obs}</span>}
@@ -1022,12 +1036,12 @@ export default function App() {
               ))}
             </div>
             <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
-              <button onClick={() => { setModal({ type: "mov", item, dir: "entrada" }); setForm({ dir: "entrada" }); }} style={{ ...sbtn("#22c55e"), flex: 1, padding: 9 }}>↑ Entrada</button>
-              <button onClick={() => { setModal({ type: "mov", item, dir: "saida" }); setForm({ dir: "saida" }); }} style={{ ...sbtn("#ef4444"), flex: 1, padding: 9 }}>↓ Saída</button>
-              <button onClick={() => { setModal({ type: "mov", item, dir: "transferencia" }); setForm({ dir: "transferencia" }); }} style={{ ...sbtn("#8b5cf6"), flex: 1, padding: 9 }}>⇄ Transferir</button>
-              <button onClick={() => { setItemDraft({ ...item, locations: (item.locations || []).map(l => ({ ...l })) }); setModal({ type: "editItem", original: item }); }} style={{ ...ghost(), flex: 1, padding: 9 }}>Editar</button>
+              <button onClick={() => { setModal({ type: "mov", item, dir: "entrada" }); setForm({ dir: "entrada" }); }} style={{ ...sbtn("#22c55e"), flex: 1, padding: 9, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}><ArrowUp size={12} strokeWidth={2.5} /> Entrada</button>
+              <button onClick={() => { setModal({ type: "mov", item, dir: "saida" }); setForm({ dir: "saida" }); }} style={{ ...sbtn("#ef4444"), flex: 1, padding: 9, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}><ArrowDown size={12} strokeWidth={2.5} /> Saída</button>
+              <button onClick={() => { setModal({ type: "mov", item, dir: "transferencia" }); setForm({ dir: "transferencia" }); }} style={{ ...sbtn("#8b5cf6"), flex: 1, padding: 9, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}><ArrowLeftRight size={12} strokeWidth={2.5} /> Transferir</button>
+              <button onClick={() => { setItemDraft({ ...item, locations: (item.locations || []).map(l => ({ ...l })) }); setModal({ type: "editItem", original: item }); }} style={{ ...ghost(), flex: 1, padding: 9, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}><Pencil size={12} strokeWidth={2.25} /> Editar</button>
             </div>
-            <button onClick={() => deleteItem(item.id)} style={{ width: "100%", padding: "7px", borderRadius: 5, border: `1px solid rgba(239,68,68,.3)`, background: "transparent", color: "#ef4444", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Remover item</button>
+            <button onClick={() => deleteItem(item.id)} style={{ width: "100%", padding: "7px", borderRadius: 5, border: `1px solid rgba(239,68,68,.3)`, background: "transparent", color: "#ef4444", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}><Trash2 size={12} strokeWidth={2.25} /> Remover item</button>
           </Overlay>
         );
       })()}
