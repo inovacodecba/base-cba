@@ -1,6 +1,6 @@
 {
-  "name": "Inventário CBA",
-  "short_name": "Inventário CBA",
+  "name": "Base de Dados",
+  "short_name": "Base de Dados",
   "description": "Controle de estoque e equipamentos - CBA",
   "start_url": "/inventario-cba/",
   "scope": "/inventario-cba/",
