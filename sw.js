@@ -1,4 +1,4 @@
-// Service worker do Inventário CBA.
+// Service worker do Base de Dados (ex-"Inventário CBA").
 //
 // Histórico: em 06/08/2026 descobrimos que o app ficava preso numa versão
 // antiga mesmo após deploys corretos, porque (1) o cache estático nunca era
@@ -11,8 +11,8 @@
 //   - fetch(..., { cache: "no-store" }) na navegação garante que o HTML
 //     (que referencia o JS com hash da build) sempre venha da rede quando
 //     há conexão — nunca de um cache HTTP desatualizado.
-const CACHE = "inventario-cba-v2";
-const CORE_ASSETS = ["/inventario-cba/", "/inventario-cba/index.html", "/inventario-cba/manifest.webmanifest"];
+const CACHE = "base-de-dados-v1";
+const CORE_ASSETS = ["/base-de-dados/", "/base-de-dados/index.html", "/base-de-dados/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
   self.skipWaiting();
