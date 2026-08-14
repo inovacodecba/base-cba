@@ -11,8 +11,8 @@
 //   - fetch(..., { cache: "no-store" }) na navegação garante que o HTML
 //     (que referencia o JS com hash da build) sempre venha da rede quando
 //     há conexão — nunca de um cache HTTP desatualizado.
-const CACHE = "base-de-dados-v1";
-const CORE_ASSETS = ["/base-de-dados/", "/base-de-dados/index.html", "/base-de-dados/manifest.webmanifest"];
+const CACHE = "base-cba-v1";
+const CORE_ASSETS = ["/base-cba/", "/base-cba/index.html", "/base-cba/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
   self.skipWaiting();
