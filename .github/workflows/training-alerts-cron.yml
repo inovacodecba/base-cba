@@ -1,0 +1,19 @@
+name: training-alerts-cron
+
+on:
+  schedule:
+    # 11:00 UTC = 08:00 em Brasília (horário de Brasília sem horário de verão)
+    - cron: "0 11 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  send-alerts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chamar a Edge Function send-training-alerts
+        run: |
+          curl -sS -X POST \
+            "https://aayayeytzaflbipqppwt.supabase.co/functions/v1/send-training-alerts" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            -w "\nHTTP status: %{http_code}\n" \
+            --fail-with-body
