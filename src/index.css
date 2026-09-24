@@ -8,3 +8,18 @@ body {
   margin: 0;
   padding: 0;
 }
+
+/* Indicador de foco visível para navegação por teclado (auditoria de
+   acessibilidade, 04/2026) — antes não existia NENHUM estilo de :focus
+   global no app (o único arquivo com `:focus-visible`, App.css, nunca é
+   importado; só index.css é usado, ver main.jsx). Sem isso, quem navega só
+   com teclado não tinha nenhuma pista visual de qual botão/campo estava
+   focado. `:focus-visible` (não `:focus`) faz o anel aparecer só na
+   navegação por teclado, sem poluir o clique de mouse. Cor fixa (não segue
+   o accent do usuário, que só existe via estilo inline em runtime) mas
+   testada para passar 3:1 (WCAG 1.4.11) tanto no fundo claro quanto no
+   escuro do app. */
+:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}

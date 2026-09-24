@@ -1,0 +1,15 @@
+{
+  "name": "Base de Dados",
+  "short_name": "Base de Dados",
+  "description": "Controle de estoque e equipamentos - CBA",
+  "start_url": "/base-cba/",
+  "scope": "/base-cba/",
+  "display": "standalone",
+  "background_color": "#0b0f14",
+  "theme_color": "#0b0f14",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

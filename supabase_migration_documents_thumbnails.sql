@@ -1,0 +1,22 @@
+-- ============================================================================
+-- Inventário CBA — miniatura (thumbnail) de documentos com imagem
+-- Rode DEPOIS de já ter rodado o supabase_migration_documents.sql.
+-- Painel Supabase > SQL Editor > New query > Run.
+-- ============================================================================
+--
+-- Guarda o caminho, no mesmo bucket de Storage, de uma miniatura JPEG
+-- pequena (gerada no navegador, lado maior ~320px) de cada foto enviada —
+-- usada pra mostrar uma prévia real do documento na grade da aba
+-- "Documentos" em vez de só um ícone genérico + nome.
+--
+-- Nullable e opcional de propósito:
+--   - Documentos que não são imagem (PDF, planilha, etc.) nunca têm miniatura.
+--   - Fotos já enviadas ANTES desta migração continuam sem miniatura — a
+--     grade cai de volta pra mostrar a própria foto original nesses casos
+--     (funciona igual, só não economiza banda). Só passam a ganhar
+--     miniatura de verdade as fotos enviadas depois de rodar esta migração.
+--   - O app já sabe rodar sem esta coluna (tenta gravar thumbnail_path e,
+--     se a coluna não existir ainda, refaz o insert sem ela) — então não tem
+--     pressa nem risco em rodar isso quando for conveniente.
+
+alter table public.documents add column if not exists thumbnail_path text;
