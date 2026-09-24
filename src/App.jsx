@@ -15,6 +15,7 @@ import { Documentos } from "./components/documents/Documentos.jsx";
 import { Tarefas } from "./components/tasks/Tarefas.jsx";
 import { docStatus, isImageFile, makeThumbnail } from "./components/documents/helpers.js";
 import { Configuracoes } from "./components/settings/Configuracoes.jsx";
+import { Ponto } from "./components/ponto/Ponto.jsx";
 
 // Mapa carregado sob demanda (otimização de carregamento, 04/2026): é o único
 // lugar do app que importa `leaflet` (~150KB minificado antes de gzip) — sem
@@ -189,6 +190,13 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [dbError, setDbError] = useState(null);
   const [view, setView] = useState("dashboard");
+  // Ponto por QR Code: o QR impresso abre o site com ?ponto=<codigo>. Guarda
+  // o código até o registro ser feito (sobrevive ao login no meio do caminho).
+  const [pontoCodigo, setPontoCodigo] = useState(() => new URLSearchParams(window.location.search).get("ponto"));
+  const clearPontoCodigo = useCallback(() => {
+    setPontoCodigo(null);
+    window.history.replaceState(null, "", window.location.pathname);
+  }, []);
   const [invTab, setInvTab] = useState("inventario"); // aba ativa dentro da mega-view "inventario": "inventario" | "movimentacoes"
   const [toast, setToast] = useState(null);
   const [modal, setModal] = useState(null);
@@ -254,6 +262,7 @@ export default function App() {
     if (savedUser && authSession?.access_token) {
       setCurrentUser(savedUser);
       setIsAdminUser(decodeIsAdmin(authSession.access_token));
+      if (pontoCodigo) setView("ponto");
       loadAll();
     } else {
       localStorage.removeItem("inv-user");
@@ -463,7 +472,7 @@ export default function App() {
     setLoginForm({ name: "", password: "", confirm: "" });
     setHasPassword(null);
     setLoginErr("");
-    setView("dashboard"); // sempre entra pela Visão Geral, nunca herda a tela do usuário anterior
+    setView(pontoCodigo ? "ponto" : "dashboard"); // entra pela Visão Geral (ou direto no Ponto, se veio de um QR Code)
     // Só agora — com a sessão já autenticada — busca os dados da empresa.
     // setLoaded(false) faz o skeleton de carregamento aparecer por um
     // instante em vez de mostrar a tela principal já "vazia" por um piscar.
@@ -1386,6 +1395,7 @@ export default function App() {
         <button disabled={checkingUser} onClick={handleLogin} style={{ ...btn(T.accent), width: "100%", padding: "10px", fontSize: 13, marginTop: 4, opacity: checkingUser ? .6 : 1 }}>
           {loginForm.name && hasPassword === false ? "Criar senha e entrar" : "Entrar"}
         </button>
+        {pontoCodigo && <div style={{ fontSize: 11, color: T.accent, marginTop: 12, textAlign: "center", fontWeight: 600 }}>Entre para registrar o ponto.</div>}
         <div style={{ fontSize: 9, color: T.textFaint, marginTop: 14, textAlign: "center" }}>Dados sincronizados em tempo real.</div>
       </div>
     </div>
@@ -1585,6 +1595,19 @@ export default function App() {
                 />
               </Suspense>
             </>
+          )}
+
+          {/* PONTO (QR Code) */}
+          {view === "ponto" && (
+            <Ponto
+              T={T}
+              sb={sb}
+              currentUser={currentUser}
+              isAdmin={isAdminUser}
+              codigo={pontoCodigo}
+              onCodigoDone={clearPontoCodigo}
+              showToast={showToast}
+            />
           )}
 
           {/* TAREFAS */}

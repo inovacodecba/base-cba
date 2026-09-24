@@ -6,12 +6,12 @@
 import {
   LayoutDashboard, Boxes, ArrowLeftRight, Layers, FileText, Bell,
   MapPin, Map, Tags, Truck, Settings, Moon, Sun, LogOut, Search, MoreHorizontal, X, Plus,
-  FolderOpen, ClipboardCheck,
+  FolderOpen, ClipboardCheck, QrCode,
 } from "lucide-react";
 import { NAV_ITEMS } from "../../constants.js";
 
 const ICONS = {
-  LayoutDashboard, Boxes, ArrowLeftRight, Layers, FileText, Bell, MapPin, Map, Tags, Truck, Settings, FolderOpen, ClipboardCheck,
+  LayoutDashboard, Boxes, ArrowLeftRight, Layers, FileText, Bell, MapPin, Map, Tags, Truck, Settings, FolderOpen, ClipboardCheck, QrCode,
 };
 
 // `badgeCount` (opcional): contador vermelho tipo "notificação" ao lado do
