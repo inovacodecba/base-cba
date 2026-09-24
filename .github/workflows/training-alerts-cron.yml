@@ -1,0 +1,28 @@
+name: Alerta de treinamentos vencendo
+
+# Dispara a Edge Function "send-training-alerts" do Supabase 1x por dia.
+# O site (GitHub Pages) é hospedagem estática — não consegue rodar isso
+# sozinho, então quem "liga o despertador" é o próprio GitHub, com o mesmo
+# repositório que já hospeda o site.
+#
+# Precisa de UM secret configurado em: Settings > Secrets and variables >
+# Actions > New repository secret:
+#   CRON_SECRET  → a mesma string aleatória configurada como secret na Edge
+#                  Function no painel do Supabase (Edge Functions >
+#                  send-training-alerts > Secrets).
+#
+# 11:00 UTC = 08:00 no horário de Brasília (sem horário de verão hoje em dia).
+on:
+  schedule:
+    - cron: "0 11 * * *"
+  workflow_dispatch: {} # também permite disparar manualmente pela aba "Actions" do GitHub, pra testar
+
+jobs:
+  send-alerts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chamar Edge Function send-training-alerts
+        run: |
+          curl -sS -X POST \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            "https://aayayeytzaflbipqppwt.supabase.co/functions/v1/send-training-alerts"
