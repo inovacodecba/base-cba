@@ -256,7 +256,7 @@ export const NAV_ITEMS = [
   { key: "movimentacoes", label: "Movimentações", icon: "ArrowLeftRight", primary: true, jump: "inventario", tab: "movimentacoes", desktopHidden: true },
   { key: "mapa", label: "Mapa", icon: "Map", section: "Operação" },
   { key: "tarefas", label: "Tarefas", icon: "ClipboardCheck", section: "Operação" },
-  { key: "ponto", label: "Ponto", icon: "QrCode", section: "Operação" },
+  { key: "ponto", label: "Ponto", icon: "QrCode", primary: true, section: "Operação" },
   { key: "documentos", label: "Documentos", icon: "FolderOpen", section: "Configurações" },
   { key: "configuracoes", label: "Configurações", icon: "Settings", section: "Configurações" },
 ];

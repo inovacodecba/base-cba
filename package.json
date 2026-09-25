@@ -12,6 +12,7 @@
     "deploy": "gh-pages -d dist"
   },
   "dependencies": {
+    "jsqr": "^1.4.0",
     "leaflet": "^1.9.4",
     "lucide-react": "1.21.0",
     "qrcode": "^1.5.4",

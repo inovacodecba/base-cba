@@ -15,8 +15,10 @@
 //     com a posição do local e marca `fora_do_raio`, e ignora toque duplo.
 //   - Ninguém edita nem apaga registro (sem policy de update/delete).
 //   - Cada pessoa vê só os próprios registros; admin vê todos (RLS no banco).
-import { useState, useEffect, useMemo, useCallback } from "react";
-import { LogIn, LogOut, MapPin, QrCode, Download, Crosshair, Plus, AlertTriangle, CheckCircle2, Printer, ScanLine } from "lucide-react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { MapPin, QrCode, Download, Crosshair, Plus, AlertTriangle, CheckCircle2, Printer, Camera } from "lucide-react";
+import { QrScanner } from "./QrScanner.jsx";
+import { saldoDia, fmtSaldo, corSaldo } from "./bancoHoras.js";
 import { makeStyleHelpers } from "../../theme.js";
 import { dlCSV } from "../../utils.js";
 
@@ -29,7 +31,6 @@ const fmtDia = (iso) => new Date(iso).toLocaleDateString("pt-BR", { timeZone: TZ
 const diaKey = (iso) => new Date(iso).toLocaleDateString("sv-SE", { timeZone: TZ }); // "2026-09-24"
 const hojeKey = () => new Date().toLocaleDateString("sv-SE", { timeZone: TZ });
 const addDias = (key, n) => { const d = new Date(`${key}T12:00:00`); d.setDate(d.getDate() + n); return d.toLocaleDateString("sv-SE"); };
-const fmtDur = (ms) => { const m = Math.round(ms / 60000); return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}`; };
 
 // Mensagem legível a partir do erro do PostgREST (vem como JSON em texto).
 const errMsg = (e) => { try { return JSON.parse(e.message).message || e.message; } catch { return e.message; } };
@@ -43,18 +44,7 @@ const getGPS = () => new Promise((resolve) => {
   );
 });
 
-// Soma o tempo entre cada "entrada" e a "saída" seguinte do mesmo dia.
-function totalDia(marcacoes) {
-  const ord = [...marcacoes].sort((a, b) => a.registrado_em.localeCompare(b.registrado_em));
-  let total = 0, aberta = null;
-  for (const r of ord) {
-    if (r.tipo === "entrada") aberta = aberta || r;
-    else if (aberta) { total += new Date(r.registrado_em) - new Date(aberta.registrado_em); aberta = null; }
-  }
-  return { total, emAberto: !!aberta };
-}
-
-export function Ponto({ T, sb, currentUser, isAdmin, codigo, onCodigoDone, showToast }) {
+export function Ponto({ T, sb, currentUser, isAdmin, codigo, onCodigoDone, onScan, showToast }) {
   const { inp, btn, ghost, sbtn } = makeStyleHelpers(T);
   const [locais, setLocais] = useState([]);
   const [registros, setRegistros] = useState([]);
@@ -62,9 +52,12 @@ export function Ponto({ T, sb, currentUser, isAdmin, codigo, onCodigoDone, showT
   const [de, setDe] = useState(addDias(hojeKey(), -30));
   const [ate, setAte] = useState(hojeKey());
   const [pessoa, setPessoa] = useState("todos");
-  const [enviando, setEnviando] = useState(null); // "entrada" | "saida" | null
+  const [enviando, setEnviando] = useState(false);
   const [ok, setOk] = useState(null); // resultado do último registro
   const [novoLocal, setNovoLocal] = useState("");
+  const [scanning, setScanning] = useState(false);
+  const aoLerQR = useCallback((c) => { setScanning(false); setOk(null); onScan(c); }, [onScan]);
+  const fecharScanner = useCallback(() => setScanning(false), []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -88,18 +81,15 @@ export function Ponto({ T, sb, currentUser, isAdmin, codigo, onCodigoDone, showT
 
   const localQR = codigo ? locais.find(l => l.codigo === codigo) : null;
 
-  // Sugere o próximo tipo: se a última marcação de hoje foi entrada, sugere saída.
-  const sugerido = useMemo(() => {
-    const minhasHoje = registros.filter(r => r.pessoa === currentUser && diaKey(r.registrado_em) === hojeKey());
-    return minhasHoje[0]?.tipo === "entrada" ? "saida" : "entrada";
-  }, [registros, currentUser]);
-
-  const registrar = async (tipo) => {
-    setEnviando(tipo);
+  // Tipo automático (decidido no servidor): 1ª leitura do dia = entrada;
+  // se a última marcação do dia foi entrada = saída. Leitura repetida em
+  // menos de 2 min não cria outro registro.
+  const registrar = async () => {
+    setEnviando(true);
     try {
       const gps = await getGPS();
       const res = await sb("rpc/registrar_ponto", "POST", {
-        p_codigo: codigo, p_tipo: tipo,
+        p_codigo: codigo,
         p_lat: gps?.lat ?? null, p_lng: gps?.lng ?? null, p_precisao: gps?.acc ?? null,
       });
       setOk({ ...res, semGps: !gps });
@@ -107,10 +97,21 @@ export function Ponto({ T, sb, currentUser, isAdmin, codigo, onCodigoDone, showT
       load();
     } catch (e) {
       showToast(errMsg(e), "err");
+      onCodigoDone();
     } finally {
-      setEnviando(null);
+      setEnviando(false);
     }
   };
+
+  // Assim que o QR (link ou leitor do app) traz um código válido, registra
+  // sozinho — uma vez por código.
+  const jaRegistrou = useRef(null);
+  useEffect(() => {
+    if (!codigo || loading || !localQR || jaRegistrou.current === codigo) return;
+    jaRegistrou.current = codigo;
+    registrar();
+  }, [codigo, loading, localQR]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!codigo) jaRegistrou.current = null; }, [codigo]);
 
   // ── admin: locais ──
   const definirPosicao = async (local) => {
@@ -162,7 +163,7 @@ export function Ponto({ T, sb, currentUser, isAdmin, codigo, onCodigoDone, showT
       if (!m.has(k)) m.set(k, { dia: diaKey(r.registrado_em), iso: r.registrado_em, pessoa: r.pessoa, marc: [] });
       m.get(k).marc.push(r);
     }
-    return [...m.values()].map(g => ({ ...g, ...totalDia(g.marc), marc: g.marc.sort((a, b) => a.registrado_em.localeCompare(b.registrado_em)) }));
+    return [...m.values()].map(g => ({ ...g, ...saldoDia(g.marc, g.dia), marc: g.marc.sort((a, b) => a.registrado_em.localeCompare(b.registrado_em)) }));
   }, [filtrados]);
 
   const exportar = () => {
@@ -186,30 +187,13 @@ export function Ponto({ T, sb, currentUser, isAdmin, codigo, onCodigoDone, showT
           {loading ? <div style={{ color: T.textMuted }}>Carregando…</div> : !localQR ? (
             <div style={{ display: "flex", gap: 8, alignItems: "center", color: "#ef4444" }}>
               <AlertTriangle size={18} /> QR Code inválido ou local desativado.
-              <button style={{ ...ghost(), marginLeft: "auto" }} onClick={onCodigoDone}>Fechar</button>
+              <button style={{ ...ghost(), marginLeft: "auto" }} onClick={() => { onCodigoDone(); setScanning(true); }}>Ler outro</button>
             </div>
           ) : (
             <>
-              <div style={{ fontSize: 12, color: T.textMuted, display: "flex", alignItems: "center", gap: 6 }}><MapPin size={14} /> Registrar ponto em</div>
+              <div style={{ fontSize: 12, color: T.textMuted, display: "flex", alignItems: "center", gap: 6 }}><MapPin size={14} /> Registrando ponto em</div>
               <div style={{ fontSize: 22, fontWeight: 700, color: T.textBright, margin: "4px 0 2px" }}>{localQR.nome}</div>
-              <div style={{ fontSize: 12, color: T.textFaint, marginBottom: 14 }}>{currentUser} · o horário é registrado pelo servidor</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                {["entrada", "saida"].map(t => {
-                  const Icon = t === "entrada" ? LogIn : LogOut;
-                  const destaque = sugerido === t;
-                  return (
-                    <button key={t} disabled={!!enviando} onClick={() => registrar(t)} style={{
-                      ...btn(destaque ? tipoCor(t) : T.panelAlt, destaque ? "#fff" : T.text),
-                      border: destaque ? "none" : `1px solid ${T.border}`,
-                      padding: "18px 10px", fontSize: 16, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                      opacity: enviando && enviando !== t ? .5 : 1,
-                    }}>
-                      <Icon size={20} /> {enviando === t ? "Registrando…" : t === "entrada" ? "Entrada" : "Saída"}
-                    </button>
-                  );
-                })}
-              </div>
-              <div style={{ fontSize: 11, color: T.textFaint, marginTop: 10 }}>O navegador pode pedir permissão de localização — permita, para confirmar que você está no local.</div>
+              <div style={{ fontSize: 12, color: T.textFaint }}>{enviando ? "Confirmando localização e horário…" : "Aguarde…"}</div>
             </>
           )}
         </div>
@@ -234,12 +218,16 @@ export function Ponto({ T, sb, currentUser, isAdmin, codigo, onCodigoDone, showT
         </div>
       )}
 
-      {!codigo && !ok && (
-        <div style={{ ...card, display: "flex", alignItems: "center", gap: 10, color: T.textMuted }}>
-          <ScanLine size={22} color={T.accent} />
-          <span>Para registrar, aponte a câmera do celular para o <b>QR Code do local</b>.</span>
-        </div>
+      {!codigo && (
+        <button onClick={() => setScanning(true)} style={{
+          ...btn(T.accent), width: "100%", padding: "18px 12px", fontSize: 16, borderRadius: 10, marginBottom: 14,
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+        }}>
+          <Camera size={22} /> {ok ? "Registrar outro ponto" : "Escanear QR Code"}
+        </button>
       )}
+
+      {scanning && <QrScanner T={T} onResult={aoLerQR} onClose={fecharScanner} />}
 
       {/* ── Histórico ── */}
       <div style={card}>
@@ -264,7 +252,7 @@ export function Ponto({ T, sb, currentUser, isAdmin, codigo, onCodigoDone, showT
               <span style={{ fontWeight: 700, color: T.text, textTransform: "capitalize" }}>{fmtDia(g.iso)}</span>
               {isAdmin && <span style={{ color: T.textMuted }}>· {g.pessoa}</span>}
               <span style={{ marginLeft: "auto", fontSize: 12, color: T.textMuted }}>
-                {g.total > 0 ? `Total ${fmtDur(g.total)}` : ""}{g.emAberto ? " · sem saída" : ""}
+                {g.semSaida && g.dia !== hojeKey() ? "sem saída · " : ""}Saldo <b style={{ color: corSaldo(g.saldo) || T.textMuted }}>{fmtSaldo(g.saldo)}</b>
               </span>
             </div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>

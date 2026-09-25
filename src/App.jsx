@@ -16,6 +16,7 @@ import { Tarefas } from "./components/tasks/Tarefas.jsx";
 import { docStatus, isImageFile, makeThumbnail } from "./components/documents/helpers.js";
 import { Configuracoes } from "./components/settings/Configuracoes.jsx";
 import { Ponto } from "./components/ponto/Ponto.jsx";
+import { BancoHorasCard } from "./components/ponto/BancoHorasCard.jsx";
 
 // Mapa carregado sob demanda (otimização de carregamento, 04/2026): é o único
 // lugar do app que importa `leaflet` (~150KB minificado antes de gzip) — sem
@@ -1547,6 +1548,9 @@ export default function App() {
 
           {/* DASHBOARD */}
           {view === "dashboard" && (
+            <BancoHorasCard T={T} sb={sb} currentUser={currentUser} isAdmin={isAdminUser} onOpen={() => setView("ponto")} />
+          )}
+          {view === "dashboard" && (
             <Dashboard
               T={T}
               items={items}
@@ -1606,6 +1610,7 @@ export default function App() {
               isAdmin={isAdminUser}
               codigo={pontoCodigo}
               onCodigoDone={clearPontoCodigo}
+              onScan={setPontoCodigo}
               showToast={showToast}
             />
           )}
