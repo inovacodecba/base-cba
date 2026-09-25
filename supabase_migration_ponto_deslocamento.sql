@@ -1,0 +1,15 @@
+-- Ponto: deslocamento para outro local + saída remota (25/09/2026)
+-- Aplicada direto no banco via conector Supabase (migrações
+-- "ponto_deslocamento_saida_remota" e "ponto_ordem_desempate").
+-- Não precisa rodar de novo — este arquivo é só o registro.
+--
+-- - ponto_registros: tipo agora aceita 'deslocamento'; colunas novas
+--   destino, motivo, remoto; local_id passou a aceitar null (saída remota).
+-- - ponto_locais.pergunta_destino: true só no "Armário Almoxarifado".
+-- - registrar_ponto(..., p_perguntar, p_acao, p_destino, p_motivo): no QR
+--   com pergunta_destino e o dia aberto, devolve precisa_escolher; a
+--   resposta 'saida' encerra o dia, 'deslocamento' exige destino + motivo e
+--   NÃO encerra o dia.
+-- - encerrar_dia_remoto(lat, lng, precisao): saída sem QR, só permitida se
+--   o último registro de hoje for um deslocamento. Marca remoto = true.
+-- - meu_status_ponto(): último registro de hoje de quem está logado.

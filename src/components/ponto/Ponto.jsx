@@ -16,7 +16,7 @@
 //   - Ninguém edita nem apaga registro (sem policy de update/delete).
 //   - Cada pessoa vê só os próprios registros; admin vê todos (RLS no banco).
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { MapPin, QrCode, Download, Crosshair, Plus, AlertTriangle, CheckCircle2, Printer, Camera } from "lucide-react";
+import { MapPin, QrCode, Navigation, LogOut, Home, ArrowLeft, Download, Crosshair, Plus, AlertTriangle, CheckCircle2, Printer, Camera } from "lucide-react";
 import { QrScanner } from "./QrScanner.jsx";
 import { saldoDia, fmtSaldo, corSaldo } from "./bancoHoras.js";
 import { makeStyleHelpers } from "../../theme.js";
@@ -44,6 +44,10 @@ const getGPS = () => new Promise((resolve) => {
   );
 });
 
+// Destinos quando a pessoa sai do Armário para outro ponto da fábrica
+// (lista fixa por enquanto — 25/09/2026). "Outros" abre campo de texto.
+const DESTINOS = ["Sala Forno 70", "Balança 80T", "Balança 100T", "Fundição 1", "Fundição 2"];
+
 export function Ponto({ T, sb, currentUser, isAdmin, codigo, onCodigoDone, onScan, showToast }) {
   const { inp, btn, ghost, sbtn } = makeStyleHelpers(T);
   const [locais, setLocais] = useState([]);
@@ -56,6 +60,14 @@ export function Ponto({ T, sb, currentUser, isAdmin, codigo, onCodigoDone, onSca
   const [ok, setOk] = useState(null); // resultado do último registro
   const [novoLocal, setNovoLocal] = useState("");
   const [scanning, setScanning] = useState(false);
+  // Pergunta "vai embora ou para outro local?" (QR do Armário com o dia aberto)
+  const [escolha, setEscolha] = useState(null); // null | { local, gps, etapa: "pergunta" | "destino" }
+  const [destino, setDestino] = useState("");
+  const [destinoOutro, setDestinoOutro] = useState("");
+  const [motivo, setMotivo] = useState("");
+  // Situação atual (último registro de hoje) — pra mostrar "Você está em…"
+  const [status, setStatus] = useState(null);
+  const [confirmEncerrar, setConfirmEncerrar] = useState(false);
   const aoLerQR = useCallback((c) => { setScanning(false); setOk(null); onScan(c); }, [onScan]);
   const fecharScanner = useCallback(() => setScanning(false), []);
 
@@ -64,12 +76,14 @@ export function Ponto({ T, sb, currentUser, isAdmin, codigo, onCodigoDone, onSca
     try {
       const ini = new Date(`${de}T00:00:00-03:00`).toISOString();
       const fim = new Date(`${addDias(ate, 1)}T00:00:00-03:00`).toISOString();
-      const [l, r] = await Promise.all([
+      const [l, r, st] = await Promise.all([
         sb("ponto_locais?order=nome.asc"),
         sb(`ponto_registros?order=registrado_em.desc&registrado_em=gte.${ini}&registrado_em=lt.${fim}&limit=2000`),
+        sb("rpc/meu_status_ponto", "POST", {}).catch(() => null),
       ]);
       setLocais(l || []);
       setRegistros(r || []);
+      setStatus(st);
     } catch (e) {
       showToast(`Erro ao carregar ponto: ${errMsg(e)}`, "err");
     } finally {
@@ -84,20 +98,53 @@ export function Ponto({ T, sb, currentUser, isAdmin, codigo, onCodigoDone, onSca
   // Tipo automático (decidido no servidor): 1ª leitura do dia = entrada;
   // se a última marcação do dia foi entrada = saída. Leitura repetida em
   // menos de 2 min não cria outro registro.
-  const registrar = async () => {
+  // No QR do Armário com o dia já aberto, o servidor devolve
+  // precisa_escolher em vez de registrar — aí a tela pergunta "vai embora
+  // ou vai para outro local?" e chama de novo com a resposta (p_acao).
+  const limparEscolha = () => { setEscolha(null); setDestino(""); setDestinoOutro(""); setMotivo(""); };
+  const registrar = async (resposta = null) => {
     setEnviando(true);
     try {
-      const gps = await getGPS();
+      const gps = resposta ? escolha?.gps : await getGPS();
       const res = await sb("rpc/registrar_ponto", "POST", {
-        p_codigo: codigo,
+        p_codigo: codigo, p_perguntar: true,
         p_lat: gps?.lat ?? null, p_lng: gps?.lng ?? null, p_precisao: gps?.acc ?? null,
+        ...(resposta || {}),
       });
+      if (res?.precisa_escolher) {
+        setEscolha({ local: res.local, gps, etapa: "pergunta" });
+        return;
+      }
+      limparEscolha();
       setOk({ ...res, semGps: !gps });
       onCodigoDone();
       load();
     } catch (e) {
       showToast(errMsg(e), "err");
-      onCodigoDone();
+      if (!resposta) { limparEscolha(); onCodigoDone(); }
+    } finally {
+      setEnviando(false);
+    }
+  };
+  const cancelarEscolha = () => { limparEscolha(); onCodigoDone(); };
+  const confirmarDeslocamento = () => {
+    const d = destino === "Outros" ? destinoOutro.trim() : destino;
+    if (!d) return showToast("Escolha para onde você vai", "err");
+    if (motivo.trim().length < 3) return showToast("Escreva o motivo", "err");
+    registrar({ p_acao: "deslocamento", p_destino: d, p_motivo: motivo.trim() });
+  };
+
+  // Encerrar o dia de onde estiver (só depois de um deslocamento).
+  const encerrarRemoto = async () => {
+    setEnviando(true);
+    try {
+      const gps = await getGPS();
+      const res = await sb("rpc/encerrar_dia_remoto", "POST", { p_lat: gps?.lat ?? null, p_lng: gps?.lng ?? null, p_precisao: gps?.acc ?? null });
+      setConfirmEncerrar(false);
+      setOk({ ...res, semGps: !gps });
+      load();
+    } catch (e) {
+      showToast(errMsg(e), "err");
     } finally {
       setEnviando(false);
     }
@@ -167,17 +214,21 @@ export function Ponto({ T, sb, currentUser, isAdmin, codigo, onCodigoDone, onSca
   }, [filtrados]);
 
   const exportar = () => {
-    const rows = [["Data", "Hora", "Pessoa", "Local", "Tipo", "Distância (m)", "Fora do raio"]];
+    const rows = [["Data", "Hora", "Pessoa", "Local", "Tipo", "Destino", "Motivo", "Saída remota", "Distância (m)", "Fora do raio", "Latitude", "Longitude"]];
+    const nomeTipo = { entrada: "Entrada", saida: "Saída", deslocamento: "Deslocamento" };
     [...filtrados].reverse().forEach(r => rows.push([
       new Date(r.registrado_em).toLocaleDateString("pt-BR", { timeZone: TZ }), fmtHora(r.registrado_em),
-      r.pessoa, r.local_nome, r.tipo === "entrada" ? "Entrada" : "Saída",
-      r.distancia_m ?? "", r.fora_do_raio ? "SIM" : "",
+      r.pessoa, r.remoto ? "" : r.local_nome, nomeTipo[r.tipo] || r.tipo,
+      r.destino ?? "", r.motivo ?? "", r.remoto ? "SIM" : "",
+      r.distancia_m ?? "", r.fora_do_raio ? "SIM" : "", r.lat ?? "", r.lng ?? "",
     ]));
     dlCSV(`ponto_${de}_a_${ate}.csv`, rows);
   };
 
   const card = { background: T.panel, border: `1px solid ${T.border}`, borderRadius: 10, padding: 16, marginBottom: 14, boxShadow: T.shadow };
-  const tipoCor = (t) => t === "entrada" ? "#16a34a" : "#ef4444";
+  const tipoCor = (t) => t === "entrada" ? "#16a34a" : t === "deslocamento" ? "#f59e0b" : "#ef4444";
+  const bigBtn = (bg, fg) => ({ ...btn(bg, fg), width: "100%", padding: "16px 14px", fontSize: 15, borderRadius: 10, display: "flex", alignItems: "center", gap: 12, textAlign: "left" });
+  const emDeslocamento = status?.tipo === "deslocamento";
 
   return (
     <div style={{ maxWidth: 900 }}>
@@ -190,7 +241,52 @@ export function Ponto({ T, sb, currentUser, isAdmin, codigo, onCodigoDone, onSca
               <button style={{ ...ghost(), marginLeft: "auto" }} onClick={() => { onCodigoDone(); setScanning(true); }}>Ler outro</button>
             </div>
           ) : (
-            <>
+            escolha ? (
+              escolha.etapa === "pergunta" ? (
+                <>
+                  <div style={{ fontSize: 12, color: T.textMuted, display: "flex", alignItems: "center", gap: 6 }}><MapPin size={14} /> {escolha.local}</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: T.textBright, margin: "4px 0 14px" }}>Você vai embora ou vai para outro local?</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <button disabled={enviando} onClick={() => registrar({ p_acao: "saida" })} style={bigBtn("#ef4444", "#fff")}>
+                      <Home size={22} /> <span><b style={{ display: "block" }}>{enviando ? "Registrando…" : "Vou embora"}</b><span style={{ fontSize: 12, opacity: .85, fontWeight: 500 }}>Registra a saída e encerra o dia</span></span>
+                    </button>
+                    <button disabled={enviando} onClick={() => setEscolha(e => ({ ...e, etapa: "destino" }))} style={bigBtn(T.panelAlt2, T.text)}>
+                      <Navigation size={22} color="#f59e0b" /> <span><b style={{ display: "block" }}>Vou para outro local</b><span style={{ fontSize: 12, color: T.textMuted, fontWeight: 500 }}>Continua trabalhando em outro ponto da fábrica</span></span>
+                    </button>
+                  </div>
+                  <button onClick={cancelarEscolha} style={{ ...ghost(), marginTop: 12 }}>Cancelar</button>
+                </>
+              ) : (
+                <>
+                  <button onClick={() => setEscolha(e => ({ ...e, etapa: "pergunta" }))} style={{ background: "none", border: "none", color: T.textMuted, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, padding: 0, fontFamily: "inherit" }}><ArrowLeft size={14} /> Voltar</button>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: T.textBright, margin: "8px 0 12px" }}>Para onde você vai?</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
+                    {[...DESTINOS, "Outros"].map(d => {
+                      const sel = destino === d;
+                      return (
+                        <button key={d} onClick={() => setDestino(d)} style={{
+                          padding: "12px 10px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontSize: 13.5, fontWeight: 600,
+                          border: `1.5px solid ${sel ? "#f59e0b" : T.border}`, background: sel ? "#f59e0b1f" : T.panelAlt, color: sel ? T.textBright : T.text,
+                        }}>{d}</button>
+                      );
+                    })}
+                  </div>
+                  {destino === "Outros" && (
+                    <input autoFocus value={destinoOutro} onChange={e => setDestinoOutro(e.target.value)} maxLength={80} placeholder="Escreva o local" style={inp({ marginTop: 10, padding: "10px 12px", fontSize: 14 })} />
+                  )}
+                  {destino && (
+                    <>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: T.text, margin: "14px 0 6px" }}>Motivo</div>
+                      <textarea value={motivo} onChange={e => setMotivo(e.target.value)} maxLength={300} rows={3} placeholder="Ex.: verificar o totem da sala forno" style={inp({ padding: "10px 12px", fontSize: 14, resize: "vertical" })} />
+                      <button disabled={enviando} onClick={confirmarDeslocamento} style={{ ...bigBtn("#f59e0b", "#111"), justifyContent: "center", marginTop: 12 }}>
+                        <Navigation size={18} /> {enviando ? "Registrando…" : "Confirmar ida"}
+                      </button>
+                    </>
+                  )}
+                  <button onClick={cancelarEscolha} style={{ ...ghost(), marginTop: 12 }}>Cancelar</button>
+                </>
+              )
+            ) : <>
               <div style={{ fontSize: 12, color: T.textMuted, display: "flex", alignItems: "center", gap: 6 }}><MapPin size={14} /> Registrando ponto em</div>
               <div style={{ fontSize: 22, fontWeight: 700, color: T.textBright, margin: "4px 0 2px" }}>{localQR.nome}</div>
               <div style={{ fontSize: 12, color: T.textFaint }}>{enviando ? "Confirmando localização e horário…" : "Aguarde…"}</div>
@@ -205,16 +301,42 @@ export function Ponto({ T, sb, currentUser, isAdmin, codigo, onCodigoDone, onSca
             {ok.fora_do_raio ? <AlertTriangle size={28} color="#f97316" /> : <CheckCircle2 size={28} color="#16a34a" />}
             <div>
               <div style={{ fontSize: 18, fontWeight: 700, color: T.textBright }}>
-                {ok.tipo === "entrada" ? "Entrada" : "Saída"} registrada às {fmtHora(ok.registrado_em)}
+                {ok.tipo === "deslocamento" ? `Ida para ${ok.destino} registrada às ${fmtHora(ok.registrado_em)}` : `${ok.tipo === "entrada" ? "Entrada" : "Saída"} registrada às ${fmtHora(ok.registrado_em)}`}
               </div>
               <div style={{ fontSize: 12.5, color: T.textMuted }}>
-                {ok.local}{ok.duplicado ? " · já estava registrado há menos de 1 minuto" : ""}
+                {ok.remoto ? `Saída remota · ${ok.local}` : ok.tipo === "deslocamento" ? "Quando terminar, toque em \"Encerrar o dia\" aqui no Ponto" : ok.local}{ok.duplicado ? " · já estava registrado há menos de 1 minuto" : ""}
                 {ok.fora_do_raio ? ` · fora da área do local${ok.distancia_m != null ? ` (${Math.round(ok.distancia_m)} m)` : ""}` : ""}
                 {ok.semGps ? " · sem localização" : ""}
               </div>
             </div>
             <button style={{ ...ghost(), marginLeft: "auto" }} onClick={() => setOk(null)}>OK</button>
           </div>
+        </div>
+      )}
+
+      {!codigo && emDeslocamento && (
+        <div style={{ ...card, borderColor: "#f59e0b66", background: `linear-gradient(0deg, #f59e0b0d, #f59e0b0d), ${T.panel}` }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+            <span style={{ width: 38, height: 38, borderRadius: 10, background: "#f59e0b22", color: "#f59e0b", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Navigation size={20} /></span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, color: T.textMuted }}>Você está em</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: T.textBright }}>{status.destino}</div>
+              <div style={{ fontSize: 12, color: T.textFaint }}>desde {fmtHora(status.registrado_em)}{status.motivo ? ` · ${status.motivo}` : ""}</div>
+            </div>
+          </div>
+          {!confirmEncerrar ? (
+            <button onClick={() => setConfirmEncerrar(true)} style={{ ...bigBtn("#ef4444", "#fff"), justifyContent: "center", marginTop: 14 }}>
+              <LogOut size={18} /> Encerrar o dia
+            </button>
+          ) : (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 13, color: T.text, marginBottom: 8 }}>Registrar a saída agora, às <b>{fmtHora(new Date().toISOString())}</b>? A sua localização vai junto.</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={enviando} onClick={encerrarRemoto} style={{ ...btn("#ef4444", "#fff"), flex: 1, padding: "12px" }}>{enviando ? "Registrando…" : "Sim, encerrar"}</button>
+                <button disabled={enviando} onClick={() => setConfirmEncerrar(false)} style={{ ...ghost(), padding: "12px 16px" }}>Não</button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -257,11 +379,13 @@ export function Ponto({ T, sb, currentUser, isAdmin, codigo, onCodigoDone, onSca
             </div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {g.marc.map(r => (
-                <span key={r.id} title={r.fora_do_raio ? `Fora da área do local${r.distancia_m != null ? ` (${Math.round(r.distancia_m)} m)` : " (sem GPS)"}` : ""} style={{
+                <span key={r.id} title={[r.motivo && `Motivo: ${r.motivo}`, r.remoto && "Saída registrada fora do QR Code", r.fora_do_raio && `Fora da área do local${r.distancia_m != null ? ` (${Math.round(r.distancia_m)} m)` : " (sem GPS)"}`].filter(Boolean).join(" · ")} style={{
                   fontSize: 12, padding: "4px 8px", borderRadius: 5, background: `${tipoCor(r.tipo)}14`, border: `1px solid ${tipoCor(r.tipo)}33`,
                   color: T.text, display: "inline-flex", alignItems: "center", gap: 5,
                 }}>
-                  <b style={{ color: tipoCor(r.tipo) }}>{r.tipo === "entrada" ? "E" : "S"}</b> {fmtHora(r.registrado_em)} · {r.local_nome}
+                  {r.tipo === "deslocamento"
+                    ? <><Navigation size={12} color={tipoCor(r.tipo)} /> {fmtHora(r.registrado_em)} · {r.destino}{r.motivo ? <span style={{ color: T.textMuted }}> — {r.motivo}</span> : null}</>
+                    : <><b style={{ color: tipoCor(r.tipo) }}>{r.tipo === "entrada" ? "E" : "S"}</b> {fmtHora(r.registrado_em)} · {r.remoto ? <>remota{r.destino ? ` (${r.destino})` : ""}</> : r.local_nome}</>}
                   {r.fora_do_raio && <AlertTriangle size={12} color="#f97316" />}
                 </span>
               ))}
