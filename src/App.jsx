@@ -16,6 +16,7 @@ import { Tarefas } from "./components/tasks/Tarefas.jsx";
 import { docStatus, isImageFile, makeThumbnail } from "./components/documents/helpers.js";
 import { Configuracoes } from "./components/settings/Configuracoes.jsx";
 import { Ponto } from "./components/ponto/Ponto.jsx";
+import { ErrorBoundary } from "./components/ErrorBoundary.jsx";
 import { BancoHorasCard } from "./components/ponto/BancoHorasCard.jsx";
 
 // Mapa carregado sob demanda (otimização de carregamento, 04/2026): é o único
@@ -25,7 +26,17 @@ import { BancoHorasCard } from "./components/ponto/BancoHorasCard.jsx";
 // Leaflet) num chunk próprio, baixado só quando o usuário realmente clica em
 // "Mapa" — o resto do app (login, Dashboard, Inventário, que é a tela mais
 // usada no dia a dia) carrega mais rápido, especialmente em rede móvel.
-const NetworkMap = lazy(() => import("./components/map/NetworkMap.jsx").then(m => ({ default: m.NetworkMap })));
+// Se o app ficou aberto desde antes de uma publicação nova, o arquivo antigo
+// do mapa não existe mais no servidor e o import falha (tela branca). Nesse
+// caso recarrega a página UMA vez para pegar a versão nova (28/09/2026).
+const NetworkMap = lazy(() => import("./components/map/NetworkMap.jsx")
+  .then(m => { try { sessionStorage.removeItem("chunk-reload"); } catch { /* ignora */ } return { default: m.NetworkMap }; })
+  .catch(err => {
+    let jaTentou = false;
+    try { jaTentou = sessionStorage.getItem("chunk-reload") === "1"; sessionStorage.setItem("chunk-reload", "1"); } catch { /* ignora */ }
+    if (!jaTentou) { window.location.reload(); return new Promise(() => {}); }
+    throw err;
+  }));
 
 const SUPABASE_URL = "https://aayayeytzaflbipqppwt.supabase.co";
 const SUPABASE_KEY = "sb_publishable__G4Ir20rpp9rC0qg-b5tpg_bU8ToqI-";
@@ -1545,6 +1556,7 @@ export default function App() {
         />
 
         <div className="content-inner" style={{ maxWidth: 1300, margin: "0 auto", padding: "20px 20px 40px" }}>
+          <ErrorBoundary T={T} key={view}>
 
           {/* DASHBOARD */}
           {view === "dashboard" && (
@@ -1987,6 +1999,7 @@ export default function App() {
           </div>
           </>}
         </>}
+          </ErrorBoundary>
           </div>
 
         <MobileBottomNav T={T} view={view} invTab={invTab} onNavigate={(item) => navigateTo(item, { setView, setModal, setBatchQtys, setBatchSearch, setInvTab, showToast })} onMore={() => setMobileMenuOpen(true)} />
