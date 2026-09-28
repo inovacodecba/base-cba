@@ -14,6 +14,7 @@ import { Overlay } from "../common.jsx";
 import { makeStyleHelpers } from "../../theme.js";
 import { EQUIP_TIPO } from "../../constants.js";
 import { dlCSV } from "../../utils.js";
+import { OcorrenciaForm, OcorrenciasDoEquipamento, OcorrenciasPanel } from "./Ocorrencias.jsx";
 import { createSatelliteMap, satelliteMapCss, declutterLabels, PLANT_CENTER } from "./satelliteMap.js";
 
 const TIPO_ORDER = ["totem", "amplimax", "impressora", "caixa_baixa", "outro"];
@@ -50,17 +51,17 @@ const TIPO_LABEL_DIR = { totem: "right", amplimax: "left", impressora: "top", ca
 // sozinho se o conjunto de equipamentos mudar (mais pontos, planta maior
 // etc.) sem precisar chutar de novo.
 
-function markerStyle(color, selected) {
+function markerStyle(color, selected, alerta = false) {
   return {
-    radius: selected ? 10 : 7,
-    color: "#fff",
-    weight: selected ? 3 : 1.5,
+    radius: selected ? 10 : alerta ? 9 : 7,
+    color: alerta ? "#ef4444" : "#fff",
+    weight: selected ? 3 : alerta ? 3.5 : 1.5,
     fillColor: color,
     fillOpacity: 1,
   };
 }
 
-export function NetworkMap({ T, equipamentos, onAddEquipamento, onRemoveEquipamento, showToast }) {
+export function NetworkMap({ T, sb, equipamentos, onAddEquipamento, onRemoveEquipamento, showToast }) {
   const { btn, ghost, inp } = makeStyleHelpers(T);
   const mapElRef = useRef(null);
   const mapRef = useRef(null);
@@ -84,6 +85,36 @@ export function NetworkMap({ T, equipamentos, onAddEquipamento, onRemoveEquipame
   // o dropdown ficaria travado fechado na próxima busca. Por isso reabre
   // explicitamente a cada tecla digitada (onChange), não só ao focar.
   const [searchOpen, setSearchOpen] = useState(false);
+
+  // ── Ocorrências (ver Ocorrencias.jsx) ──
+  const [ocorrencias, setOcorrencias] = useState([]);
+  const [destacar, setDestacar] = useState(false); // realça no mapa quem tem ocorrência aberta
+  const [formOcorr, setFormOcorr] = useState(null); // equipamento para o qual está registrando
+  const carregarOcorrencias = () => sb && sb("equipamento_ocorrencias?order=created_at.desc&limit=500").then(r => setOcorrencias(r || [])).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { carregarOcorrencias(); }, []);
+  const equipById = useMemo(() => new Map(equipamentos.filter(e => e.id != null).map(e => [e.id, e])), [equipamentos]);
+  const comAberta = useMemo(() => new Set(ocorrencias.filter(o => o.status === "aberta").map(o => o.equipamento_id)), [ocorrencias]);
+  const salvarOcorrencia = async (dados) => {
+    try {
+      await sb("equipamento_ocorrencias", "POST", dados);
+      showToast && showToast("Ocorrência registrada");
+      carregarOcorrencias();
+      return true;
+    } catch (e) {
+      showToast && showToast(`Erro ao registrar: ${e.message}`, "err");
+      return false;
+    }
+  };
+  const mudarStatus = async (o, status) => {
+    try {
+      await sb("rpc/ocorrencia_set_status", "POST", { p_id: o.id, p_status: status });
+      showToast && showToast(status === "resolvida" ? "Marcada como resolvida" : "Ocorrência reaberta");
+      carregarOcorrencias();
+    } catch (e) {
+      showToast && showToast(`Erro: ${e.message}`, "err");
+    }
+  };
 
   const areas = useMemo(() => [...new Set(equipamentos.map(e => e.area))].sort(), [equipamentos]);
 
@@ -138,6 +169,14 @@ export function NetworkMap({ T, equipamentos, onAddEquipamento, onRemoveEquipame
     setSearchOpen(false);
     const map = mapRef.current;
     if (map) map.flyTo([e.lat, e.lng], Math.max(map.getZoom(), labelThresholdRef.current ?? map.getZoom()), { duration: 0.6 });
+  };
+
+  const focarPorEquip = (e) => {
+    const i = equipamentos.findIndex(x => x.id === e.id);
+    if (i >= 0) {
+      focusEquipamento({ ...equipamentos[i], _i: i });
+      mapElRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
   };
 
   const exportCSV = () => {
@@ -217,9 +256,10 @@ export function NetworkMap({ T, equipamentos, onAddEquipamento, onRemoveEquipame
       seen.add(e._i);
       const info = EQUIP_TIPO[e.tipo] || EQUIP_TIPO.outro;
       const isSelected = selected === e._i;
+      const alerta = destacar && comAberta.has(e.id);
       let marker = markersRef.current.get(e._i);
       if (!marker) {
-        marker = L.circleMarker([e.lat, e.lng], markerStyle(info.color, isSelected));
+        marker = L.circleMarker([e.lat, e.lng], markerStyle(info.color, isSelected, alerta));
         marker.on("click", ev => { L.DomEvent.stopPropagation(ev); setSelected(e._i); });
         // Tooltip permanente (não reage a hover — quem abre/fecha é a gente,
         // via recomputeLabels, pra evitar textos sobrepostos em clusters densos).
@@ -229,7 +269,7 @@ export function NetworkMap({ T, equipamentos, onAddEquipamento, onRemoveEquipame
         marker.addTo(map);
         markersRef.current.set(e._i, marker);
       } else {
-        marker.setStyle(markerStyle(info.color, isSelected));
+        marker.setStyle(markerStyle(info.color, isSelected, alerta));
       }
     });
     // remove marcadores que saíram do filtro
@@ -243,7 +283,7 @@ export function NetworkMap({ T, equipamentos, onAddEquipamento, onRemoveEquipame
     recomputeLabelsRef.current = () => declutterLabels(map, markersRef.current, { selectedKey: selected, zoomThreshold: labelThresholdRef.current });
     recomputeLabelsRef.current();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible.map(e => `${e._i}:${e.tipo}`).join(","), selected]);
+  }, [visible.map(e => `${e._i}:${e.tipo}`).join(","), selected, destacar, [...comAberta].join(",")]);
 
   // Cursor de "posicionando" e sincronização da ref usada pelo listener de clique.
   useEffect(() => {
@@ -368,15 +408,16 @@ export function NetworkMap({ T, equipamentos, onAddEquipamento, onRemoveEquipame
       />
 
       {sel && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "11px 14px", borderRadius: 8, background: T.panelAlt, border: `1px solid ${T.border}` }}>
-          <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ padding: "11px 14px", borderRadius: 8, background: T.panelAlt, border: `1px solid ${T.border}` }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ minWidth: 0, flex: "1 1 180px", display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ width: 9, height: 9, borderRadius: "50%", background: (EQUIP_TIPO[sel.tipo] || EQUIP_TIPO.outro).color, flexShrink: 0 }} />
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 12.5, fontWeight: 700, color: T.textBright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sel.name}</div>
               <div style={{ fontSize: 10.5, color: T.textFaint }}>{(EQUIP_TIPO[sel.tipo] || EQUIP_TIPO.outro).label} · {sel.area}</div>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+          <div style={{ display: "flex", gap: 6, flexShrink: 0, marginLeft: "auto" }}>
             <a href={`https://www.google.com/maps?q=${sel.lat},${sel.lng}`} target="_blank" rel="noopener noreferrer" style={{ ...ghost(), display: "inline-flex", alignItems: "center", gap: 5, textDecoration: "none" }}>
               <ExternalLink size={12} /> Ver GPS
             </a>
@@ -386,7 +427,17 @@ export function NetworkMap({ T, equipamentos, onAddEquipamento, onRemoveEquipame
             <button onClick={() => setSelected(null)} aria-label="Fechar" style={{ background: "none", border: "none", color: T.textFaint, cursor: "pointer", padding: 4 }}><X size={16} /></button>
           </div>
         </div>
+        {sel.id != null && sb && (
+          <OcorrenciasDoEquipamento T={T} lista={ocorrencias.filter(o => o.equipamento_id === sel.id)} onStatus={mudarStatus} onNova={() => setFormOcorr(sel)} />
+        )}
+        </div>
       )}
+
+      {sb && (
+        <OcorrenciasPanel T={T} ocorrencias={ocorrencias} equipById={equipById} destacar={destacar} setDestacar={setDestacar} onStatus={mudarStatus} onFocus={focarPorEquip} />
+      )}
+
+      {formOcorr && <OcorrenciaForm T={T} equipamento={formOcorr} onSave={salvarOcorrencia} onClose={() => setFormOcorr(null)} />}
 
       {showAddForm && (
         <Overlay T={T} onClose={() => setShowAddForm(false)}>

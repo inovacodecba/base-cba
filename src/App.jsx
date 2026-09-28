@@ -1604,6 +1604,7 @@ export default function App() {
               }>
                 <NetworkMap
                   T={T}
+                  sb={sb}
                   equipamentos={equipamentos}
                   onAddEquipamento={addEquipamento}
                   onRemoveEquipamento={removeEquipamento}

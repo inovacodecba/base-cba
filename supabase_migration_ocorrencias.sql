@@ -1,0 +1,9 @@
+-- Ocorrências dos equipamentos do Mapa (28/09/2026)
+-- Aplicada direto no banco via conector Supabase (migração "equipamento_ocorrencias").
+-- Não precisa rodar de novo — este arquivo é só o registro.
+--
+-- Tabela equipamento_ocorrencias: equipamento_id (-> equipamentos_rede),
+-- tipo ("Sem Amplimax", "Totem caído"...), descricao, status aberta|resolvida,
+-- criado_por (preenchido pelo login), created_at, resolvido_por, resolvido_em.
+-- RLS: logado lê/cria/atualiza; só admin apaga.
+-- Função ocorrencia_set_status(id, status): resolve/reabre gravando quem e quando.
