@@ -11,7 +11,11 @@
 //   - fetch(..., { cache: "no-store" }) na navegação garante que o HTML
 //     (que referencia o JS com hash da build) sempre venha da rede quando
 //     há conexão — nunca de um cache HTTP desatualizado.
-const CACHE = "base-cba-v1";
+// v2 (28/09/2026): a v1 guardava também respostas de ERRO (ex.: 404 de um
+// arquivo que o GitHub Pages ainda não tinha liberado logo após a publicação)
+// e ficava devolvendo esse erro para sempre — tela do Mapa quebrada. Agora só
+// guarda respostas OK, e trocar o nome do cache apaga o cache antigo.
+const CACHE = "base-cba-v2";
 const CORE_ASSETS = ["/base-cba/", "/base-cba/index.html", "/base-cba/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
@@ -36,7 +40,7 @@ self.addEventListener("fetch", (e) => {
     e.respondWith(
       fetch(e.request, { cache: "no-store" })
         .then((res) => {
-          if (e.request.mode === "navigate") {
+          if (e.request.mode === "navigate" && res.ok) {
             const resClone = res.clone();
             caches.open(CACHE).then((c) => c.put(e.request, resClone));
           }
@@ -48,8 +52,10 @@ self.addEventListener("fetch", (e) => {
   }
   e.respondWith(
     caches.match(e.request).then((cached) => cached || fetch(e.request).then((res) => {
-      const resClone = res.clone();
-      caches.open(CACHE).then((c) => c.put(e.request, resClone));
+      if (res.ok) {
+        const resClone = res.clone();
+        caches.open(CACHE).then((c) => c.put(e.request, resClone));
+      }
       return res;
     }).catch(() => cached))
   );
