@@ -23,5 +23,16 @@ export default defineConfig({
   // movendo a declaração de `showToast` para antes desse efeito. A troca
   // pro Vite 6/Rollup foi mantida mesmo assim por ser mais madura e estável
   // — mas não foi ela quem resolveu o bug do "tela branca".
-  build: { minify: 'esbuild' },
+  // 28/09/2026: o GitHub Pages (Jekyll) esconde arquivos que começam com "_"
+  // e o chunk "_commonjsHelpers" (criado quando entrou o leitor de QR) dava
+  // 404 — o Mapa ficou quebrado. Duas travas: o deploy agora publica um
+  // .nojekyll (package.json, --nojekyll) e nenhum arquivo gerado começa com "_".
+  build: {
+    minify: 'esbuild',
+    rollupOptions: {
+      output: {
+        chunkFileNames: (chunk) => `assets/${chunk.name.replace(/^_+/, '')}-[hash].js`,
+      },
+    },
+  },
 })
