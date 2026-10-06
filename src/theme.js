@@ -10,6 +10,13 @@
 // opostos sem ajustar o brilho/saturação), então a troca de tema não perde
 // contraste ao trocar a cor.
 export const ACCENT_PRESETS = [
+  // "Iris" — novo padrão visual (10/2026), inspirado no violeta "Electric
+  // Iris" de referência, com os tons ajustados pra sempre bater AA (4.5:1)
+  // tanto como texto/ícone sobre bg/panel escuros quanto como fundo de botão
+  // (ver auditoria de contraste abaixo). Primeiro da lista = preset padrão
+  // pra instalações novas (ACCENT_DEFAULT); quem já tinha outra cor salva no
+  // navegador continua com a escolha antiga, sem mudança forçada.
+  { key: "iris", label: "Íris", dark: "#8c66ff", light: "#6425e0" },
   { key: "blue", label: "Azul", dark: "#4f86f7", light: "#2563eb" },
   { key: "purple", label: "Roxo", dark: "#a78bfa", light: "#7c3aed" },
   { key: "amber", label: "Âmbar", dark: "#f5a524", light: "#d97706" },
@@ -17,7 +24,7 @@ export const ACCENT_PRESETS = [
   { key: "rose", label: "Rosa", dark: "#fb7185", light: "#e11d48" },
   { key: "cyan", label: "Ciano", dark: "#22d3ee", light: "#0891b2" },
 ];
-const ACCENT_DEFAULT = "blue";
+const ACCENT_DEFAULT = "iris";
 
 function hexToRgba(hex, alpha) {
   const h = hex.replace("#", "");
@@ -64,8 +71,14 @@ export function getTheme(theme, accentKey = ACCENT_DEFAULT) {
     hover: "rgba(0,0,0,.04)", overlay: "rgba(0,0,0,.4)", scrollbar: "#c5c8d0",
     shadow: "0 1px 3px rgba(0,0,0,.08)", th: "rgba(0,0,0,.03)",
   } : {
-    bg: "#0c0d12", panel: "#14151d", panelAlt: "rgba(255,255,255,.04)", panelAlt2: "rgba(255,255,255,.06)",
-    input: "#0a0b10", text: "#d8dae8", textBright: "#eceef8", textMuted: "#8086a0", textDim: "#5c6278",
+    // Base escura aprofundada rumo ao preto (10/2026, adaptação de
+    // identidade visual "Íris") — só escurece bg/panel/input; os tokens de
+    // texto (text/textBright/textMuted/.../textGhost) ficam iguais, o que só
+    // AUMENTA a razão de contraste deles (fundo mais escuro = mais contraste
+    // contra texto claro — ver auditoria de contraste no commit). Nenhum
+    // valor de texto foi reduzido abaixo do piso WCAG já validado antes.
+    bg: "#060608", panel: "#0f0f16", panelAlt: "rgba(255,255,255,.04)", panelAlt2: "rgba(255,255,255,.06)",
+    input: "#08080c", text: "#d8dae8", textBright: "#eceef8", textMuted: "#8086a0", textDim: "#5c6278",
     textFaint: "#7a8199", textGhost: "#5f6680", border: "rgba(255,255,255,.08)", borderSoft: "rgba(255,255,255,.04)",
     hover: "rgba(255,255,255,.04)", overlay: "rgba(0,0,0,.7)", scrollbar: "#2a2e40",
     shadow: "none", th: "rgba(255,255,255,.02)",
@@ -75,15 +88,20 @@ export function getTheme(theme, accentKey = ACCENT_DEFAULT) {
 
 // Fábrica de helpers de estilo que dependem do tema atual (T).
 export function makeStyleHelpers(T) {
-  const inp = (ex = {}) => ({ width: "100%", padding: "7px 10px", borderRadius: 5, border: `1px solid ${T.border}`, fontSize: 12, background: T.input, color: T.text, outline: "none", display: "block", fontFamily: "inherit", ...ex });
+  // Raio de borda levemente maior (5→8 em inputs/botões principais, 4→6 nos
+  // elementos menores) — adaptação "espírito" da identidade visual "Íris":
+  // mais arredondado/convidativo que o padrão anterior, sem virar pílula
+  // (48px) — a densidade funcional da tela (tabelas, botões em linha) exige
+  // formas mais discretas do que um reskin literal permitiria.
+  const inp = (ex = {}) => ({ width: "100%", padding: "7px 10px", borderRadius: 8, border: `1px solid ${T.border}`, fontSize: 12, background: T.input, color: T.text, outline: "none", display: "block", fontFamily: "inherit", ...ex });
   // tx antes era fixo em branco — falhava AA (4.5:1) em várias combinações
   // de cor de destaque + tema (ex.: âmbar claro, verde claro). Agora, quando
   // não é passado explicitamente, escolhe automaticamente entre branco e
   // quase-preto o que der mais contraste sobre o fundo do botão.
-  const btn = (bg, tx = bestTextOn(bg)) => ({ background: bg, border: "none", color: tx, padding: "6px 13px", borderRadius: 5, fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" });
+  const btn = (bg, tx = bestTextOn(bg)) => ({ background: bg, border: "none", color: tx, padding: "6px 13px", borderRadius: 8, fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" });
   const ghost = () => ({ ...btn(T.panelAlt, T.text), border: `1px solid ${T.border}` });
-  const sbtn = (c) => ({ background: `${c}14`, border: `1px solid ${c}28`, color: c, padding: "4px 9px", borderRadius: 4, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" });
-  const rowBtn = () => ({ width: 24, height: 24, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: 4, border: `1px solid ${T.border}`, background: "transparent", color: T.textFaint, cursor: "pointer" });
+  const sbtn = (c) => ({ background: `${c}14`, border: `1px solid ${c}28`, color: c, padding: "4px 9px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" });
+  const rowBtn = () => ({ width: 24, height: 24, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: 6, border: `1px solid ${T.border}`, background: "transparent", color: T.textFaint, cursor: "pointer" });
   const rowBtnHover = (c) => ({
     onMouseEnter: e => { e.currentTarget.style.background = `${c}14`; e.currentTarget.style.color = c; e.currentTarget.style.borderColor = `${c}40`; },
     onMouseLeave: e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = T.textFaint; e.currentTarget.style.borderColor = T.border; },

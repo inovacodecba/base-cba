@@ -221,7 +221,7 @@ export default function App() {
   const [batchQtys, setBatchQtys] = useState({});
   const [batchSearch, setBatchSearch] = useState("");
   const [theme, setTheme] = useState("dark");
-  const [accentKey, setAccentKey] = useState("blue");
+  const [accentKey, setAccentKey] = useState("iris");
   const [newMember, setNewMember] = useState("");
   const [currentUser, setCurrentUser] = useState(null);
   // Fonte real de "é admin?" — vem do token de sessão (que a Edge Function
