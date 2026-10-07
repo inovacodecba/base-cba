@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from "react";
 import {
-  Moon, Sun, ArrowUp, ArrowDown, ArrowLeftRight, AlertTriangle,
+  Moon, Sun, ArrowUp, ArrowDown, ArrowLeftRight, ArrowRight, AlertTriangle,
   Download, Pencil, Trash2, CheckCircle2, XCircle, Info, X, MapPin, Tags,
-  FileText, Layers, Boxes,
+  FileText, Layers, Boxes, Sparkles,
 } from "lucide-react";
 
 import { getTheme, makeStyleHelpers } from "./theme.js";
@@ -1370,20 +1370,52 @@ export default function App() {
   );
 
   if (!currentUser) return (
-    <div style={{ fontFamily: "'DM Sans',sans-serif", background: T.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+    <div style={{
+      fontFamily: "'DM Sans',sans-serif", position: "relative", minHeight: "100vh", display: "flex",
+      alignItems: "center", justifyContent: "center", padding: 20, overflow: "hidden",
+      background: `linear-gradient(150deg, ${T.bg} 0%, ${T.panel} 50%, ${T.bg} 100%)`,
+    }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-      <button onClick={() => setTheme(t => t === "dark" ? "light" : "dark")} style={{ position: "fixed", top: 16, right: 16, width: 34, height: 34, borderRadius: 6, border: `1px solid ${T.border}`, background: T.panel, color: T.textMuted, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+      <style>{`
+        @keyframes lg-float-a{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(24px,-18px) scale(1.06)}}
+        @keyframes lg-float-b{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-20px,20px) scale(1.08)}}
+        @keyframes lg-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+        @keyframes lg-twinkle{0%,100%{opacity:.22;transform:scale(.85) rotate(0deg)}50%{opacity:1;transform:scale(1.15) rotate(20deg)}}
+        @keyframes lg-card-in{from{opacity:0;transform:translateY(14px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+        .lg-blob{position:absolute;border-radius:50%;filter:blur(70px);pointer-events:none}
+        .lg-sparkle{position:absolute;pointer-events:none;color:${T.accent}}
+        .lg-card{animation:lg-card-in .55s cubic-bezier(.2,.8,.2,1)}
+        .lg-submit{transition:transform 180ms ease,box-shadow 180ms ease,opacity 180ms ease}
+        .lg-submit:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 10px 24px ${T.accent}3a}
+        .lg-submit:active:not(:disabled){transform:translateY(0)}
+      `}</style>
+      <div className="lg-blob" style={{ width: 340, height: 340, top: "-8%", left: "-6%", background: `${T.accent}33`, animation: "lg-float-a 9s ease-in-out infinite" }} />
+      <div className="lg-blob" style={{ width: 300, height: 300, bottom: "-10%", right: "-6%", background: `${T.accent}29`, animation: "lg-float-b 11s ease-in-out infinite" }} />
+      <svg style={{ position: "absolute", width: 260, height: 260, top: "55%", left: "62%", opacity: .45, pointerEvents: "none", animation: "lg-spin 44s linear infinite" }} viewBox="0 0 200 200">
+        <path d="M38,-47.7C53.6,-38.1,72.3,-28.6,77.8,-14.4C83.3,-0.2,75.5,18.8,63.6,33.4C51.7,48,35.6,58.3,18.1,63.6C0.6,68.9,-18.4,69.3,-33.8,61.5C-49.2,53.8,-61.1,37.9,-66.4,20.2C-71.7,2.5,-70.4,-17,-61.3,-31.7C-52.2,-46.4,-35.4,-56.3,-18.7,-62.6C-2,-68.9,14.5,-57.3,38,-47.7Z" transform="translate(100 100)" fill="none" stroke={T.accent} strokeOpacity=".4" strokeWidth="1.4" />
+      </svg>
+      {[
+        { top: "14%", left: "10%", size: 16, delay: "0s" },
+        { top: "22%", left: "84%", size: 12, delay: "1.4s" },
+        { top: "78%", left: "18%", size: 14, delay: "2.6s" },
+        { top: "70%", left: "88%", size: 18, delay: ".8s" },
+      ].map((s, i) => (
+        <Sparkles key={i} className="lg-sparkle" size={s.size} style={{ top: s.top, left: s.left, animation: `lg-twinkle ${3.4 + i * .4}s ease-in-out infinite`, animationDelay: s.delay }} />
+      ))}
+      <button onClick={() => setTheme(t => t === "dark" ? "light" : "dark")} style={{ position: "fixed", top: 16, right: 16, width: 34, height: 34, borderRadius: 999, border: `1px solid ${T.border}`, background: T.panel, color: T.textMuted, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 2 }}>
         {theme === "dark" ? <Moon size={16} /> : <Sun size={16} />}
       </button>
-      <div style={{ background: T.panel, borderRadius: 8, padding: "32px 28px", width: "100%", maxWidth: 360, border: `1px solid ${T.border}` }}>
-        <div style={{ marginBottom: 24 }}>
-          <div style={{ fontSize: 10, letterSpacing: 3, color: T.textFaint, fontWeight: 700, textTransform: "uppercase", marginBottom: 3 }}>Inovacode</div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: T.textBright }}>Base de Dados</div>
+      <div className="lg-card" style={{ position: "relative", zIndex: 1, background: T.panel, borderRadius: 20, padding: "34px 30px", width: "100%", maxWidth: 360, border: `1px solid ${T.border}`, boxShadow: `0 24px 60px ${T.accent}20, 0 10px 30px rgba(0,0,0,.3)` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
+          <div style={{ width: 34, height: 34, borderRadius: 10, background: `${T.accent}1c`, border: `1px solid ${T.accent}33`, display: "flex", alignItems: "center", justifyContent: "center", color: T.accent, flexShrink: 0 }}>
+            <Sparkles size={17} />
+          </div>
+          <div>
+            <div style={{ fontSize: 10, letterSpacing: 3, color: T.textFaint, fontWeight: 700, textTransform: "uppercase", marginBottom: 2 }}>Inovacode</div>
+            <div style={{ fontSize: 19, fontWeight: 700, color: T.textBright, lineHeight: 1.1 }}>Base de Dados</div>
+          </div>
         </div>
         {lbl("Quem é você?")}
-        {/* Campo de texto livre, não mais um <select> com a lista de todos
-            os nomes da equipe visível antes do login — evita que qualquer
-            visitante veja quem trabalha aqui só de abrir a tela. */}
         <input
           type="text"
           autoComplete="username"
@@ -1404,8 +1436,9 @@ export default function App() {
         </>}
         {loginForm.name.trim() && checkingUser && <div style={{ fontSize: 11, color: T.textFaint, marginBottom: 8 }}>Verificando...</div>}
         {loginErr && <div style={{ fontSize: 11, color: "#ef4444", marginBottom: 8 }}>{loginErr}</div>}
-        <button disabled={checkingUser} onClick={handleLogin} style={{ ...btn(T.accent), width: "100%", padding: "10px", fontSize: 13, marginTop: 4, opacity: checkingUser ? .6 : 1 }}>
+        <button disabled={checkingUser} onClick={handleLogin} className="lg-submit" style={{ ...btn(T.accent), width: "100%", padding: "11px", fontSize: 13, marginTop: 4, borderRadius: 999, opacity: checkingUser ? .6 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
           {loginForm.name && hasPassword === false ? "Criar senha e entrar" : "Entrar"}
+          <ArrowRight size={14} />
         </button>
         {pontoCodigo && <div style={{ fontSize: 11, color: T.accent, marginTop: 12, textAlign: "center", fontWeight: 600 }}>Entre para registrar o ponto.</div>}
         <div style={{ fontSize: 9, color: T.textFaint, marginTop: 14, textAlign: "center" }}>Dados sincronizados em tempo real.</div>
