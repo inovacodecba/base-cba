@@ -9,6 +9,7 @@ import {
   FolderOpen, ClipboardCheck, QrCode,
 } from "lucide-react";
 import { NAV_ITEMS } from "../../constants.js";
+import { bestTextOn } from "../../theme.js";
 
 const ICONS = {
   LayoutDashboard, Boxes, ArrowLeftRight, Layers, FileText, Bell, MapPin, Map, Tags, Truck, Settings, FolderOpen, ClipboardCheck, QrCode,
@@ -80,50 +81,126 @@ function SectionLabel({ T, children }) {
   );
 }
 
+// Cápsula flutuante (10/2026) — pedido do usuário foi aproximar a sidebar de
+// uma referência visual: painel branco arredondado "flutuando" sobre o
+// fundo, avatar circular saindo por cima da borda superior, e o item ativo
+// vira uma pílula colorida que "estoura" para fora da borda direita da
+// cápsula. Reproduzimos isso com uma simplificação deliberada: a referência
+// usa um efeito de "metaball" (a pílula ativa recorta uma curva côncava na
+// própria borda da cápsula ao se sobrepor, tipo duas bolhas de líquido se
+// tocando) — isso exige máscaras SVG/`radial-gradient` posicionadas a dedo
+// nos 2 cantos da transição, frágil a qualquer mudança de altura de linha,
+// número de itens, ou zoom do navegador. Em vez disso, a pílula ativa aqui é
+// convexa (seus próprios cantos arredondados, sem recorte na cápsula) e
+// desliza suavemente entre os itens — mesma linguagem visual (pílula de
+// destaque escapando da borda), só que com CSS simples e 100% robusto.
+const SIDEBAR_GAP = 16; // distância da cápsula até a borda da tela
+const AVATAR_OVERHANG = 24; // quanto o avatar sobe acima da borda de cima da cápsula
+const SIDEBAR_W = 212;
+const ROW_H = 46;
+const GROUP_GAP = 14; // respiro entre "Operação" e "Configurações", sem rótulo de texto
+const BULGE = 16; // quanto a pílula ativa escapa pra fora da borda direita da cápsula
+
+function SidebarIconBtn({ T, onClick, title, color, children }) {
+  return (
+    <button onClick={onClick} title={title} aria-label={title} style={{
+      width: 34, height: 34, borderRadius: "50%", border: `1px solid ${T.border}`, background: T.panelAlt,
+      color: color || T.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
+      cursor: "pointer", flexShrink: 0, transition: "background 150ms ease, color 150ms ease",
+    }}>{children}</button>
+  );
+}
+
 export function Sidebar({ T, view, currentUser, isAdmin, theme, setTheme, onNavigate, onNewItem, onOpenTeam, onLogout, taskBadge = 0 }) {
+  const items = NAV_ITEMS.filter(i => !i.desktopHidden);
+  const activeIndex = items.findIndex(item => !item.modal && !item.jump && !item.soon && view === item.key);
+
+  // Topo de cada linha, em px, já contando o respiro extra antes do grupo
+  // "Configurações" (índice 5: documentos) — usado tanto pra posicionar cada
+  // botão quanto a pílula deslizante, então os dois nunca saem de sincronia.
+  const rowTops = [];
+  { let acc = 0; items.forEach((_, i) => { if (i === 5) acc += GROUP_GAP; rowTops.push(acc); acc += ROW_H; }); }
+
+  const initial = (currentUser || "?").trim().slice(0, 1).toUpperCase();
+  const onAccent = bestTextOn(T.accent);
+
   return (
     <aside className="sidebar-desktop" style={{
-      position: "fixed", top: 0, left: 0, bottom: 0, width: 226, background: T.panel,
-      borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", zIndex: 90,
+      position: "fixed", top: SIDEBAR_GAP + AVATAR_OVERHANG, left: SIDEBAR_GAP, bottom: SIDEBAR_GAP, width: SIDEBAR_W,
+      background: T.panel, border: `1px solid ${T.border}`, borderRadius: 26, boxShadow: T.shadow,
+      display: "flex", flexDirection: "column", zIndex: 90, overflow: "visible",
     }}>
-      <div style={{ padding: "18px 16px 14px" }}>
-        <div style={{ fontSize: 9, letterSpacing: 3, color: T.textFaint, fontWeight: 700, textTransform: "uppercase" }}>Inovacode</div>
-        <div style={{ fontSize: 15, fontWeight: 700, color: T.textBright }}>Base de Dados</div>
+      {/* avatar "furando" a borda de cima da cápsula — a borda dele usa a cor
+          de fundo da PÁGINA (não a do painel), pra parecer recortado contra
+          o que está atrás, em vez de só flutuando por cima. */}
+      <button onClick={onOpenTeam} disabled={!isAdmin} title={isAdmin ? "Gerenciar equipe" : currentUser || "Conta"} style={{
+        position: "absolute", top: -AVATAR_OVERHANG, left: "50%", transform: "translateX(-50%)", width: 48, height: 48,
+        borderRadius: "50%", background: T.accent, color: onAccent, border: `4px solid ${T.bg}`,
+        display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700,
+        cursor: isAdmin ? "pointer" : "default", fontFamily: "inherit", boxShadow: "0 4px 10px -2px rgba(0,0,0,.25)",
+      }}>{initial}</button>
+
+      <div style={{ paddingTop: 34, paddingBottom: 10, paddingLeft: 14, paddingRight: 14, textAlign: "center" }}>
+        <div style={{ fontSize: 8.5, letterSpacing: 2.5, color: T.textFaint, fontWeight: 700, textTransform: "uppercase" }}>Inovacode</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: T.textBright, marginTop: 1 }}>Base de Dados</div>
+        <div style={{ fontSize: 10.5, color: T.textMuted, marginTop: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {currentUser}{isAdmin ? <span style={{ color: T.textFaint }}> · admin</span> : ""}
+        </div>
       </div>
 
-      <button onClick={onNewItem} style={{
-        display: "flex", alignItems: "center", justifyContent: "center", gap: 6, margin: "0 12px 14px",
-        background: T.accent, border: "none", color: "#fff", padding: "9px", borderRadius: 7,
-        fontWeight: 700, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit",
-      }}><Plus size={15} strokeWidth={2.5} /> Novo Item</button>
+      <div style={{ padding: "0 14px 14px" }}>
+        <button onClick={onNewItem} style={{
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 6, width: "100%",
+          background: T.accent, border: "none", color: onAccent, padding: "9px", borderRadius: 999,
+          fontWeight: 700, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit",
+        }}><Plus size={15} strokeWidth={2.5} /> Novo Item</button>
+      </div>
 
-      <nav style={{ flex: 1, overflowY: "auto", padding: "0 10px", display: "flex", flexDirection: "column" }}>
-        {groupBySection(NAV_ITEMS.filter(i => !i.desktopHidden)).map((group, gi) => (
-          <div key={group.section || gi} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {group.section && <SectionLabel T={T}>{group.section}</SectionLabel>}
-            {group.items.map(item => (
-              <NavButton key={item.key} item={item} T={T} active={!item.modal && !item.jump && !item.soon && view === item.key} onClick={() => onNavigate(item)} badgeCount={item.key === "tarefas" ? taskBadge : 0} />
-            ))}
-          </div>
-        ))}
+      <nav style={{ position: "relative", flex: "0 0 auto" }}>
+        {activeIndex >= 0 && (
+          <div style={{
+            position: "absolute", left: 8, right: -BULGE, top: rowTops[activeIndex] + 3, height: ROW_H - 6,
+            borderRadius: (ROW_H - 6) / 2, background: T.accent, zIndex: 0,
+            boxShadow: `0 6px 16px -4px ${T.accent}70`, transition: "top 320ms cubic-bezier(.2,.8,.2,1)",
+          }} />
+        )}
+        {items.map((item, i) => {
+          const Icon = ICONS[item.icon];
+          const active = i === activeIndex;
+          const badge = item.key === "tarefas" ? taskBadge : 0;
+          return (
+            <button
+              key={item.key}
+              onClick={() => onNavigate(item)}
+              title={item.soon ? `${item.label} — em breve` : item.label}
+              style={{
+                position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: 10, width: "100%",
+                height: ROW_H, marginTop: i === 5 ? GROUP_GAP : 0, padding: "0 18px", border: "none", background: "transparent",
+                color: active ? onAccent : item.soon ? T.textFaint : T.textMuted, fontSize: 12.5, fontWeight: active ? 700 : 500,
+                cursor: item.soon ? "default" : "pointer", fontFamily: "inherit", textAlign: "left", opacity: item.soon ? .6 : 1,
+              }}
+            >
+              {Icon && <Icon size={17} strokeWidth={2.1} style={{ flexShrink: 0 }} />}
+              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label}</span>
+              {badge > 0 && (
+                <span style={{
+                  fontSize: 9.5, fontWeight: 700, minWidth: 16, height: 16, borderRadius: 8, padding: "0 4px",
+                  display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                  background: active ? "rgba(255,255,255,.3)" : "#ef4444", color: active ? onAccent : "#fff",
+                }}>{badge > 99 ? "99+" : badge}</span>
+              )}
+            </button>
+          );
+        })}
       </nav>
 
-      <div style={{ padding: 12, borderTop: `1px solid ${T.border}`, display: "flex", flexDirection: "column", gap: 6 }}>
-        <button onClick={() => setTheme(t => t === "dark" ? "light" : "dark")} style={{
-          display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "7px 10px", borderRadius: 6,
-          border: `1px solid ${T.border}`, background: "transparent", color: T.textMuted, fontSize: 11.5,
-          cursor: "pointer", fontFamily: "inherit",
-        }}>{theme === "dark" ? <Moon size={14} /> : <Sun size={14} />} {theme === "dark" ? "Modo escuro" : "Modo claro"}</button>
-        <button onClick={onOpenTeam} disabled={!isAdmin} style={{
-          display: "flex", alignItems: "center", gap: 8, padding: "6px 2px", background: "none", border: "none",
-          color: T.textMuted, fontSize: 11.5, fontWeight: 600, cursor: isAdmin ? "pointer" : "default", fontFamily: "inherit",
-        }}>
-          <span style={{ width: 22, height: 22, borderRadius: "50%", background: `${T.accent}22`, color: T.accent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, flexShrink: 0 }}>{(currentUser || "?").slice(0, 1)}</span>
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentUser}{isAdmin ? <span style={{ color: T.textFaint, fontWeight: 500 }}> · admin</span> : ""}</span>
-        </button>
-        <button onClick={onLogout} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "6px 10px", borderRadius: 6, border: "none", background: "transparent", color: T.textFaint, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit" }}>
-          <LogOut size={14} /> Sair
-        </button>
+      <div style={{ marginTop: "auto", padding: 14, borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "center", gap: 10 }}>
+        <SidebarIconBtn T={T} onClick={() => setTheme(t => t === "dark" ? "light" : "dark")} title={theme === "dark" ? "Modo claro" : "Modo escuro"}>
+          {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+        </SidebarIconBtn>
+        <SidebarIconBtn T={T} onClick={onLogout} title="Sair" color="#ef4444">
+          <LogOut size={15} />
+        </SidebarIconBtn>
       </div>
     </aside>
   );
