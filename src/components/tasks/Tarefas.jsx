@@ -31,19 +31,44 @@
 // que já existia (drag-and-drop, setas, modal, visão por pessoa). Só a
 // camada visual mudou; toda a lógica de dados é a mesma de antes.
 import { useState, useMemo } from "react";
-import { Plus, ChevronLeft, ChevronRight, ChevronDown, CalendarDays, ClipboardCheck, Kanban, Users, ArrowRight, CheckCircle2 } from "lucide-react";
+import { Plus, ChevronLeft, ChevronRight, ChevronDown, CalendarDays, ClipboardCheck, Kanban, Users, ArrowRight, CheckCircle2, Flag, Tag } from "lucide-react";
 import { Overlay } from "../common.jsx";
 import { makeStyleHelpers } from "../../theme.js";
-import { TASK_STATUS } from "../../constants.js";
+import { TASK_STATUS, TASK_PRIORITY } from "../../constants.js";
 
 const COLS = Object.keys(TASK_STATUS); // ["a_fazer", "em_andamento", "concluido"]
+const PRIORITIES = Object.keys(TASK_PRIORITY); // ["baixa", "media", "alta", "urgente"]
 
+// Cor da tag de categoria (10/2026) — "Projeto"/"Infra"/"Compras"/etc são
+// texto livre (sem tabela própria, ver migração `add_tarefas_categoria_
+// prioridade`), então a cor não pode vir de um mapa fixo como CAT_COLOR do
+// inventário. Em vez disso, deriva um índice estável a partir do próprio
+// nome (hash simples) — a mesma categoria sempre cai na mesma cor da
+// paleta, em qualquer sessão, sem precisar persistir "categoria → cor" em
+// lugar nenhum.
+const CAT_TAG_PALETTE = ["#3b82f6", "#f97316", "#8b5cf6", "#06b6d4", "#22c55e", "#ec4899", "#14b8a6", "#f43f5e", "#84cc16", "#eab308"];
+function categoryColor(name) {
+  if (!name) return null;
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  return CAT_TAG_PALETTE[hash % CAT_TAG_PALETTE.length];
+}
+
+// "2026-08-31" → "31/08" — as tarefas guardam só a data (sem hora), então
+// não reaproveita `fd()`/`ts()` de utils.js (esses esperam o formato
+// "dd/mm/aaaa, hh:mm:ss" que o app usa pra movimentações, com hora junto).
 const fmtDate = (iso) => {
   if (!iso) return "";
   const [y, m, d] = iso.split("-");
   return `${d}/${m}`;
 };
 
+// Classifica o prazo em atrasado / hoje / próximo / normal — vira tanto a
+// cor do chip "due" quanto a tag de urgência no topo do card (reaproveita o
+// mesmo dado real do banco, sem inventar um campo de "prioridade" que não
+// existe no schema). Uma tarefa já concluída nunca é "atrasada" — depois de
+// pronta, a urgência do prazo deixa de fazer sentido (evita o estranhamento
+// de ver "Atrasada" em vermelho num card que já foi resolvido).
 function dueInfo(prazo, T, status) {
   if (status === "concluido") { const c = T.isLight ? "#1b9e4b" : "#22c55e"; return { label: "Concluída", color: c, full: "Concluída" }; }
   if (!prazo) return { label: "Sem prazo", color: T.textFaint, full: null };
@@ -56,6 +81,38 @@ function dueInfo(prazo, T, status) {
   return { label: fmtDate(prazo), full: fmtDate(prazo), color: T.textFaint };
 }
 
+// Pílula de prioridade — sempre visível no card (mesmo "Baixa"/"Média"),
+// diferente do selo de prazo que só aparece quando há algo a sinalizar.
+// Prioridade é uma escolha explícita da pessoa ao criar a tarefa, então
+// escondê-la quando "normal" esconderia informação que ela decidiu
+// registrar; já o prazo é inferido automaticamente, por isso aquele segue
+// a regra de "só mostra o que precisa de atenção".
+function PriorityBadge({ T, prioridade, compact }) {
+  const cfg = TASK_PRIORITY[prioridade] || TASK_PRIORITY.media;
+  const c = T.isLight ? cfg.color.light : cfg.color.dark;
+  return (
+    <span title={`Prioridade: ${cfg.label}`} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 9.5, fontWeight: 700, color: c, background: `${c}18`, border: `1px solid ${c}30`, borderRadius: 20, padding: compact ? "2px 7px" : "3px 8px", whiteSpace: "nowrap", flexShrink: 0 }}>
+      <Flag size={10} strokeWidth={2.5} /> {cfg.label}
+    </span>
+  );
+}
+
+// Tag de categoria (texto livre — ver comentário de CAT_TAG_PALETTE acima).
+function CategoryTag({ T, categoria }) {
+  if (!categoria) return null;
+  const c = categoryColor(categoria);
+  return (
+    <span title={categoria} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 9.5, fontWeight: 700, color: c, background: `${c}18`, border: `1px solid ${c}30`, borderRadius: 20, padding: "3px 8px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 140, flexShrink: 1 }}>
+      <Tag size={10} strokeWidth={2.5} /> {categoria}
+    </span>
+  );
+}
+
+// Estilos/animações locais ao módulo Tarefas — ficam num único <style> no
+// topo do componente principal (ver `Tarefas`) em vez de espalhados pelo
+// <style> global do App.jsx, pra manter esse pedaço do design "preso" ao
+// componente que o usa (mesma ideia de separação de responsabilidades do
+// resto do projeto).
 function TaskStyles({ T }) {
   return (
     <style>{`
@@ -77,6 +134,8 @@ function TaskStyles({ T }) {
   );
 }
 
+// Pilha de avatares (iniciais) dos responsáveis — até 3 visíveis, o resto
+// vira "+N" pra não estourar a largura do card.
 function AvatarStack({ T, names, size = 18 }) {
   if (!names || names.length === 0) return null;
   const shown = names.slice(0, 3);
@@ -95,6 +154,9 @@ function AvatarStack({ T, names, size = 18 }) {
   );
 }
 
+// Dropdown simples com checkboxes pra escolher vários responsáveis — a
+// equipe é pequena (poucas pessoas), então uma lista com checkbox resolve
+// bem sem precisar de nenhuma lib de multi-select.
 function TeamMultiSelect({ T, team, value, onChange, inp }) {
   const [open, setOpen] = useState(false);
   const toggle = (name) => onChange(value.includes(name) ? value.filter(n => n !== name) : [...value, name]);
@@ -112,6 +174,7 @@ function TeamMultiSelect({ T, team, value, onChange, inp }) {
       </button>
       {open && (
         <>
+          {/* backdrop invisível só pra fechar ao clicar fora, sem precisar de listener global */}
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 20 }} />
           <div style={{
             position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: T.panel, border: `1px solid ${T.border}`,
@@ -131,6 +194,9 @@ function TeamMultiSelect({ T, team, value, onChange, inp }) {
   );
 }
 
+// Caixinha de info rotulada (label pequeno em cima, valor embaixo) — mesmo
+// recurso visual usado em painéis tipo SaaS pra mostrar 2 atributos lado a
+// lado (aqui: Responsável / Prazo) sem precisar de tabela.
 function InfoBox({ T, label, children }) {
   return (
     <div style={{ background: T.panelAlt, borderRadius: 7, padding: "6px 8px", minWidth: 0 }}>
@@ -166,6 +232,11 @@ function TaskCard({ T, btn, ghost, task, isMine, onEdit, onMove, onDragStart, on
         <span title={due.full} style={{ flexShrink: 0, fontSize: 9.5, fontWeight: 700, color: due.color, background: `${due.color}18`, border: `1px solid ${due.color}30`, borderRadius: 20, padding: "3px 8px", whiteSpace: "nowrap" }}>{due.label}</span>
       </div>
 
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+        <PriorityBadge T={T} prioridade={task.prioridade} />
+        <CategoryTag T={T} categoria={task.categoria} />
+      </div>
+
       {task.descricao && <div style={{ fontSize: 11, color: T.textMuted, marginTop: 8, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{task.descricao}</div>}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: 10 }}>
@@ -198,10 +269,19 @@ function TaskCard({ T, btn, ghost, task, isMine, onEdit, onMove, onDragStart, on
   );
 }
 
+// Uma linha compacta de tarefa dentro do cartão de uma pessoa (visão "Por
+// Pessoa") — clicar abre o mesmo modal de edição do quadro, pra não ter
+// dois lugares diferentes editando a mesma coisa de jeitos diferentes.
 function PersonTaskRow({ T, task, onEdit }) {
   const cfg = TASK_STATUS[task.status];
   const dot = T.isLight ? cfg.dot.light : cfg.dot.dark;
   const due = dueInfo(task.prazo, T, task.status);
+  // Flag de prioridade só aparece aqui pra alta/urgente — nesta linha
+  // compacta (visão "Por Pessoa") o espaço é curto, então só vale destacar
+  // o que precisa de atenção, igual ao critério que o selo de prazo já usa.
+  const pcfg = TASK_PRIORITY[task.prioridade];
+  const showPriority = pcfg && (task.prioridade === "alta" || task.prioridade === "urgente");
+  const pColor = showPriority ? (T.isLight ? pcfg.color.light : pcfg.color.dark) : null;
   return (
     <button
       className="task-person-row"
@@ -212,12 +292,17 @@ function PersonTaskRow({ T, task, onEdit }) {
       }}
     >
       <span title={cfg.label} style={{ width: 7, height: 7, borderRadius: "50%", background: dot, flexShrink: 0 }} />
-      <span style={{ fontSize: 12, color: T.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.titulo}</span>
+      {showPriority && <Flag size={10} strokeWidth={2.5} style={{ color: pColor, flexShrink: 0 }} />}
+      <span style={{ fontSize: 12, color: T.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {task.titulo}{task.categoria ? <span style={{ color: T.textFaint, fontWeight: 500 }}> · {task.categoria}</span> : null}
+      </span>
       {due.full && <span style={{ fontSize: 9.5, fontWeight: 700, color: due.color, flexShrink: 0 }}>{due.full}</span>}
     </button>
   );
 }
 
+// Cartão de uma pessoa na visão "Por Pessoa": nome, badge de pendências e a
+// lista das tarefas dela (concluídas por último, mais urgentes primeiro).
 function PersonCard({ T, name, list, onEdit, isMe, muted, delay }) {
   const openCount = list.filter(t => t.status !== "concluido").length;
   return (
@@ -237,10 +322,14 @@ function PersonCard({ T, name, list, onEdit, isMe, muted, delay }) {
   );
 }
 
+// Agrupa as tarefas por responsável — cada pessoa da equipe aparece sempre
+// (mesmo sem tarefa, pra deixar claro que ela está livre), mais um grupo
+// "Sem responsável" no fim se houver tarefa sem ninguém atribuído.
 function PorPessoaView({ T, tasks, team, currentUser, onEdit }) {
   const { porPessoa, semResponsavel } = useMemo(() => {
-    const rank = (t) => (t.status === "concluido" ? 1 : 0);
-    const cmp = (a, b) => rank(a) - rank(b) || (a.prazo || "9999-99-99").localeCompare(b.prazo || "9999-99-99");
+    const rank = (t) => (t.status === "concluido" ? 1 : 0); // pendentes primeiro, concluídas por último
+    const prio = (t) => TASK_PRIORITY[t.prioridade]?.order ?? TASK_PRIORITY.media.order;
+    const cmp = (a, b) => rank(a) - rank(b) || prio(b) - prio(a) || (a.prazo || "9999-99-99").localeCompare(b.prazo || "9999-99-99");
     return {
       porPessoa: team.map(name => ({ name, list: tasks.filter(t => (t.responsaveis || []).includes(name)).sort(cmp) })),
       semResponsavel: tasks.filter(t => !(t.responsaveis || []).length).sort(cmp),
@@ -269,24 +358,36 @@ export function Tarefas({ T, tasks, team, currentUser, onCreate, onUpdate, onUpd
   const { inp, btn, ghost } = makeStyleHelpers(T);
   const lbl = (children) => <div style={{ fontSize: 10, fontWeight: 700, color: T.textFaint, marginBottom: 3, textTransform: "uppercase", letterSpacing: .6 }}>{children}</div>;
 
-  const [tab, setTab] = useState("quadro");
-  const [modal, setModal] = useState(null);
-  const [form, setForm] = useState({ titulo: "", descricao: "", responsaveis: [], prazo: "", status: "a_fazer" });
+  const [tab, setTab] = useState("quadro"); // "quadro" | "pessoa"
+  const [modal, setModal] = useState(null); // { type: "new" } | { type: "edit", id }
+  const [form, setForm] = useState({ titulo: "", descricao: "", responsaveis: [], prazo: "", status: "a_fazer", categoria: "", prioridade: "media" });
   const [dragId, setDragId] = useState(null);
   const [dragOverCol, setDragOverCol] = useState(null);
+  const [catFilter, setCatFilter] = useState("todas"); // "todas" | nome da categoria
 
-  const openNew = () => { setForm({ titulo: "", descricao: "", responsaveis: currentUser ? [currentUser] : [], prazo: "", status: "a_fazer" }); setModal({ type: "new" }); };
-  const openEdit = (t) => { setForm({ titulo: t.titulo, descricao: t.descricao || "", responsaveis: t.responsaveis || [], prazo: t.prazo || "", status: t.status }); setModal({ type: "edit", id: t.id }); };
+  const openNew = () => { setForm({ titulo: "", descricao: "", responsaveis: currentUser ? [currentUser] : [], prazo: "", status: "a_fazer", categoria: "", prioridade: "media" }); setModal({ type: "new" }); };
+  const openEdit = (t) => { setForm({ titulo: t.titulo, descricao: t.descricao || "", responsaveis: t.responsaveis || [], prazo: t.prazo || "", status: t.status, categoria: t.categoria || "", prioridade: t.prioridade || "media" }); setModal({ type: "edit", id: t.id }); };
   const closeModal = () => setModal(null);
 
   const submit = () => {
     const titulo = form.titulo.trim();
     if (!titulo) return showToast("Digite um título pra tarefa", "err");
-    const payload = { titulo, descricao: form.descricao.trim(), responsaveis: form.responsaveis, prazo: form.prazo || null };
+    const payload = { titulo, descricao: form.descricao.trim(), responsaveis: form.responsaveis, prazo: form.prazo || null, categoria: form.categoria.trim() || null, prioridade: form.prioridade };
     if (modal.type === "new") onCreate(payload);
     else onUpdate(modal.id, { ...payload, status: form.status });
     closeModal();
   };
+
+  // Segregação por categoria (10/2026) — "legal segregar pro projeto/infra/
+  // compras etc", pedido do usuário a partir de um print de referência.
+  // Sem tela de gestão própria: as opções do filtro são simplesmente as
+  // categorias que já foram digitadas em alguma tarefa (texto livre), então
+  // a lista cresce sozinha conforme o time usa.
+  const categoriesUsed = useMemo(() => {
+    const set = new Set(tasks.map(t => t.categoria).filter(Boolean));
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [tasks]);
+  const visibleTasks = catFilter === "todas" ? tasks : tasks.filter(t => t.categoria === catFilter);
 
   const moveTask = (task, dir) => {
     const idx = COLS.indexOf(task.status);
@@ -302,9 +403,18 @@ export function Tarefas({ T, tasks, team, currentUser, onCreate, onUpdate, onUpd
     setDragId(null); setDragOverCol(null);
   };
 
-  const sorted = (col) => tasks
+  // Prioridade primeiro (urgente no topo), depois prazo mais próximo (sem
+  // prazo vai pro fim), e em empate a mais recém-criada — mesma ideia de "o
+  // que precisa de atenção agora aparece no topo", sem precisar de
+  // reordenação manual (arrastar dentro da mesma coluna só muda de status,
+  // não a ordem — mantém simples). Respeita o filtro de categoria ativo.
+  const sorted = (col) => visibleTasks
     .filter(t => t.status === col)
-    .sort((a, b) => (a.prazo || "9999-99-99").localeCompare(b.prazo || "9999-99-99") || (b.criado_em_iso || "").localeCompare(a.criado_em_iso || ""));
+    .sort((a, b) => {
+      const prio = (TASK_PRIORITY[b.prioridade]?.order ?? TASK_PRIORITY.media.order) - (TASK_PRIORITY[a.prioridade]?.order ?? TASK_PRIORITY.media.order);
+      if (prio) return prio;
+      return (a.prazo || "9999-99-99").localeCompare(b.prazo || "9999-99-99") || (b.criado_em_iso || "").localeCompare(a.criado_em_iso || "");
+    });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -323,6 +433,37 @@ export function Tarefas({ T, tasks, team, currentUser, onCreate, onUpdate, onUpd
         </div>
         <button onClick={openNew} className="tk-pill-btn" style={{ ...btn(T.accent), borderRadius: 999, display: "flex", alignItems: "center", gap: 6, padding: "9px 16px" }}><Plus size={14} strokeWidth={2.5} /> Nova Tarefa</button>
       </div>
+
+      {categoriesUsed.length > 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button
+            onClick={() => setCatFilter("todas")}
+            className="tk-chip-btn"
+            style={{
+              display: "flex", alignItems: "center", padding: "6px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700,
+              border: `1px solid ${catFilter === "todas" ? T.accent : T.border}`, background: catFilter === "todas" ? `${T.accent}18` : "transparent", color: catFilter === "todas" ? T.accent : T.textMuted,
+            }}
+          >Todas</button>
+          {categoriesUsed.map(c => {
+            const color = categoryColor(c);
+            const active = catFilter === c;
+            return (
+              <button
+                key={c}
+                onClick={() => setCatFilter(c)}
+                className="tk-chip-btn"
+                style={{
+                  display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700,
+                  border: `1px solid ${active ? color : T.border}`, background: active ? `${color}18` : "transparent", color: active ? color : T.textMuted,
+                }}
+              >
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: color, flexShrink: 0 }} />
+                {c}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {tab === "quadro" ? (
         <div className="tk-view">
@@ -366,9 +507,15 @@ export function Tarefas({ T, tasks, team, currentUser, onCreate, onUpdate, onUpd
               <div style={{ fontSize: 12 }}>Nenhuma tarefa criada ainda — comece com "Nova Tarefa".</div>
             </div>
           )}
+          {tasks.length > 0 && visibleTasks.length === 0 && (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 16px", color: T.textFaint }}>
+              <Tag size={26} strokeWidth={1.6} />
+              <div style={{ fontSize: 12 }}>Nenhuma tarefa na categoria "{catFilter}".</div>
+            </div>
+          )}
         </div>
       ) : (
-        <PorPessoaView T={T} tasks={tasks} team={team} currentUser={currentUser} onEdit={openEdit} />
+        <PorPessoaView T={T} tasks={visibleTasks} team={team} currentUser={currentUser} onEdit={openEdit} />
       )}
 
       {modal && (
@@ -381,7 +528,7 @@ export function Tarefas({ T, tasks, team, currentUser, onCreate, onUpdate, onUpd
           {lbl("Descrição")}
           <textarea value={form.descricao} onChange={e => setForm(p => ({ ...p, descricao: e.target.value }))} placeholder="Detalhe opcional" rows={3} style={{ ...inp({ marginBottom: 10 }), resize: "vertical", fontFamily: "inherit" }} />
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
             <div>
               {lbl("Responsáveis")}
               <TeamMultiSelect T={T} team={team} value={form.responsaveis} onChange={(v) => setForm(p => ({ ...p, responsaveis: v }))} inp={inp} />
@@ -389,6 +536,28 @@ export function Tarefas({ T, tasks, team, currentUser, onCreate, onUpdate, onUpd
             <div>
               {lbl("Prazo")}
               <input type="date" value={form.prazo} onChange={e => setForm(p => ({ ...p, prazo: e.target.value }))} style={inp()} />
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 4 }}>
+            <div>
+              {lbl("Categoria")}
+              <input
+                value={form.categoria}
+                onChange={e => setForm(p => ({ ...p, categoria: e.target.value }))}
+                placeholder="ex: Projeto, Infra, Compras"
+                list="tk-cat-options"
+                style={inp()}
+              />
+              <datalist id="tk-cat-options">
+                {categoriesUsed.map(c => <option key={c} value={c} />)}
+              </datalist>
+            </div>
+            <div>
+              {lbl("Prioridade")}
+              <select value={form.prioridade} onChange={e => setForm(p => ({ ...p, prioridade: e.target.value }))} style={inp()}>
+                {PRIORITIES.map(p => <option key={p} value={p}>{TASK_PRIORITY[p].label}</option>)}
+              </select>
             </div>
           </div>
 
