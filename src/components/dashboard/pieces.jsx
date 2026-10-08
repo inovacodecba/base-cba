@@ -43,11 +43,11 @@ function useCountUp(target, duration = 700) {
 // Flag que vira `true` um instante depois da montagem — usado pra animar
 // "de 0 até o valor final" em propriedades (como o anel do donut) que
 // precisam existir primeiro no estado inicial pra depois transicionar.
-// Dois rAF encadeados garantem que o estado inicial foi pintado antes da
-// troca; ambos são cancelados se o componente desmontar no meio.
 export function useMountedAfterPaint() {
   const [ready, setReady] = useState(false);
   useEffect(() => {
+    // Dois rAF encadeados garantem que o estado inicial foi pintado antes da
+    // troca; ambos são cancelados se o componente desmontar no meio.
     let raf2;
     const raf1 = requestAnimationFrame(() => { raf2 = requestAnimationFrame(() => setReady(true)); });
     return () => { cancelAnimationFrame(raf1); if (raf2) cancelAnimationFrame(raf2); };
@@ -178,78 +178,6 @@ export function DonutChart({ T, data, size = 132, thickness = 16, centerLabel, c
             </div>
           );
         })}
-      </div>
-    </div>
-  );
-}
-
-// Gráfico de linha em SVG puro (mesmo princípio do DonutChart acima: sem
-// lib externa de gráficos). `series` é [{label, color, points:number[]}],
-// todas com o mesmo tamanho de `labels` (eixo X). O traçado "desenha" com
-// stroke-dashoffset ao montar via `pathLength=1` (truque que normaliza o
-// comprimento do path pra 1, então a animação funciona igual independente
-// do tamanho real da linha) — só decorativo, os valores plotados nunca são
-// alterados pela animação.
-export function LineChart({ T, series, labels, height = 160 }) {
-  const ready = useMountedAfterPaint();
-  const width = 600; // viewBox fixo; escala de verdade via width:100% no SVG
-  const padY = 10;
-  const max = Math.max(1, ...series.flatMap(s => s.points));
-  const n = labels.length;
-  const stepX = n > 1 ? width / (n - 1) : width;
-  const toY = v => padY + (1 - v / max) * (height - padY * 2);
-  const toX = i => i * stepX;
-  const pathFor = pts => pts.map((v, i) => `${i === 0 ? "M" : "L"}${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(" ");
-  const areaFor = pts => `${pathFor(pts)} L${toX(pts.length - 1).toFixed(1)},${height} L0,${height} Z`;
-  const labelEvery = Math.max(1, Math.ceil(n / 8)); // no máximo ~8 rótulos no eixo X, pra não embolar em telas pequenas
-
-  return (
-    <div style={{ padding: "14px 16px 16px" }}>
-      <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ overflow: "visible", display: "block" }}>
-        <defs>
-          {series.map((s, i) => (
-            <linearGradient key={i} id={`lc-grad-${i}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={s.color} stopOpacity="0.28" />
-              <stop offset="100%" stopColor={s.color} stopOpacity="0" />
-            </linearGradient>
-          ))}
-        </defs>
-        {[0.25, 0.5, 0.75].map(f => (
-          <line key={f} x1={0} x2={width} y1={height * f} y2={height * f} stroke={T.borderSoft} strokeWidth={1} />
-        ))}
-        {series.map((s, i) => (
-          <g key={i}>
-            <path d={areaFor(s.points)} fill={`url(#lc-grad-${i})`} opacity={ready ? 1 : 0} style={{ transition: "opacity 500ms ease", transitionDelay: `${i * 130 + 250}ms` }} />
-            <path
-              d={pathFor(s.points)}
-              fill="none"
-              stroke={s.color}
-              strokeWidth={2.25}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              pathLength={1}
-              strokeDasharray={1}
-              strokeDashoffset={ready ? 0 : 1}
-              style={{ transition: "stroke-dashoffset 850ms cubic-bezier(.2,.8,.2,1)", transitionDelay: `${i * 130}ms` }}
-            />
-            {s.points.map((v, pi) => (
-              <circle key={pi} cx={toX(pi)} cy={toY(v)} r={2.6} fill={s.color} opacity={ready ? 1 : 0} style={{ transition: "opacity 260ms ease", transitionDelay: `${850 + i * 130}ms` }} />
-            ))}
-          </g>
-        ))}
-      </svg>
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
-        {labels.map((l, i) => (
-          <span key={i} style={{ fontSize: 9, color: T.textFaint, visibility: i % labelEvery === 0 || i === n - 1 ? "visible" : "hidden" }}>{l}</span>
-        ))}
-      </div>
-      <div style={{ display: "flex", gap: 16, marginTop: 10, flexWrap: "wrap" }}>
-        {series.map((s, i) => (
-          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: T.textMuted }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: s.color, flexShrink: 0 }} />
-            {s.label}
-          </div>
-        ))}
       </div>
     </div>
   );

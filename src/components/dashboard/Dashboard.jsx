@@ -4,9 +4,9 @@
 import { memo } from "react";
 import {
   Boxes, Package, Wrench, AlertTriangle, TrendingDown, TrendingUp, Plus, ArrowUpDown,
-  ArrowLeftRight, FileText, ClipboardCheck, Tags, MapPin, Zap, Kanban, CalendarDays, Flag,
+  ArrowLeftRight, FileText, ClipboardCheck, Tags, MapPin, Zap, Kanban, CalendarDays, Flag, ListChecks,
 } from "lucide-react";
-import { PanelCard, StatTile, DonutChart, LineChart } from "./pieces.jsx";
+import { PanelCard, StatTile, DonutChart } from "./pieces.jsx";
 import { DirIcon, CategoryBadge } from "../common.jsx";
 import { tot, isLow, fd, ft, fmtBRL, disponibilidade } from "../../utils.js";
 import { docStatus } from "../documents/helpers.js";
@@ -36,8 +36,7 @@ function taskUrgency(prazo) {
 }
 
 // Chave "AAAA-MM-DD" no horário LOCAL do navegador (não UTC). Usar
-// toISOString() aqui jogaria movimentações feitas depois das 21h (UTC-3)
-// para o dia seguinte no gráfico de fluxo.
+// toISOString() faria o "hoje" virar o dia seguinte a partir das 21h (UTC-3).
 const dayKey = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 // date_iso pode vir só com a data ("2026-10-08") ou com hora completa — só a
 // segunda precisa ser convertida pro fuso local.
@@ -147,25 +146,28 @@ function DashboardImpl({ T, items, movs, sectorNames, sectorColor, categoryNames
   const defTrend = weeklyDelta(idSet(defItems));
   const baixoTrend = weeklyDelta(idSet(baixoItems));
 
-  // Fluxo de estoque (14 dias) — mesmo princípio do weeklyDelta acima, mas
-  // granular por dia (em vez de um único total) pra alimentar o gráfico de
-  // linha entradas × saídas. Dias sempre no fuso local (ver dayKey).
-  const flowDays = Array.from({ length: 14 }, (_, i) => {
-    const d = new Date(); d.setDate(d.getDate() - (13 - i)); d.setHours(0, 0, 0, 0);
-    return d;
-  });
-  const flowKeys = flowDays.map(dayKey);
-  const flowLabels = flowDays.map(d => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`);
-  const flowIndex = new Map(flowKeys.map((k, i) => [k, i]));
-  const entradaSeries = flowKeys.map(() => 0);
-  const saidaSeries = flowKeys.map(() => 0);
-  for (const m of movs) {
-    if (!m.date_iso || (m.dir !== "entrada" && m.dir !== "saida")) continue;
-    const idx = flowIndex.get(movDayKey(m.date_iso));
-    if (idx === undefined) continue;
-    if (m.dir === "entrada") entradaSeries[idx] += m.qty;
-    else saidaSeries[idx] += m.qty;
-  }
+  // Resumo (10/2026) — substituiu o gráfico de linha "Fluxo de estoque"
+  // (entradas × saídas por dia): o usuário achou que não agregava valor,
+  // porque com pouca movimentação diária a linha fica quase sempre reta/
+  // vazia — uma série temporal só compensa quando há volume de dados pra
+  // preencher os 14 dias. Em vez disso, isto é um snapshot de fatos prontos
+  // (quantidade fixa de linhas, sempre com conteúdo), que fica útil mesmo
+  // com poucos registros — mesma ideia do card "Summary" do print de
+  // referência que o usuário mandou.
+  const todayKey = dayKey(new Date());
+  const movsToday = movs.filter(m => m.date_iso && movDayKey(m.date_iso) === todayKey).length;
+  const movsWeek = movs.filter(m => m.date_iso && m.date_iso >= cutoff).length;
+  const totalValue = itemsComValor.reduce((s, i) => s + i.valor_estimado * tot(i), 0);
+  const topSector = sectorData.length ? [...sectorData].sort((a, b) => b.value - a.value)[0] : null;
+  const openTasksCount = (tasks || []).filter(t => t.status !== "concluido").length;
+  const summaryRows = [
+    { icon: ArrowLeftRight, color: T.accent, label: "Movimentações hoje", value: String(movsToday) },
+    { icon: TrendingUp, color: "#22c55e", label: "Movimentações esta semana", value: String(movsWeek) },
+    { icon: Boxes, color: "#eab308", label: "Valor total em estoque", value: fmtBRL(totalValue) },
+    ...(topSector && topSector.value > 0 ? [{ icon: MapPin, color: "#06b6d4", label: "Setor com mais unidades", value: `${topSector.label} (${topSector.value})` }] : []),
+    ...(catValue.length && catValue[0].total > 0 ? [{ icon: Tags, color: "#8b5cf6", label: "Categoria mais valiosa", value: catValue[0].label }] : []),
+    { icon: Kanban, color: "#f97316", label: "Tarefas em aberto", value: String(openTasksCount) },
+  ];
 
   // Tarefas mais próximas do vencimento — só as que ainda não terminaram,
   // sem prazo vai pro fim da lista; em empate de prazo, a de maior
@@ -227,15 +229,16 @@ function DashboardImpl({ T, items, movs, sectorNames, sectorColor, categoryNames
       </div>
 
       <div className="dash-flow" style={{ display: "grid", gap: 14 }}>
-        <PanelCard T={T} title="Fluxo de estoque (14 dias)" icon={TrendingUp} iconColor="#22c55e">
-          <LineChart
-            T={T}
-            labels={flowLabels}
-            series={[
-              { label: "Entradas", color: "#22c55e", points: entradaSeries },
-              { label: "Saídas", color: "#ef4444", points: saidaSeries },
-            ]}
-          />
+        <PanelCard T={T} title="Resumo" icon={ListChecks} iconColor="#22c55e">
+          {summaryRows.map((r, idx) => (
+            <div key={r.label} className="dash-row" style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: idx === summaryRows.length - 1 ? "none" : `1px solid ${T.borderSoft}`, animation: "pc-in 300ms ease both", animationDelay: `${Math.min(idx * 40, 240)}ms` }}>
+              <span style={{ width: 26, height: 26, borderRadius: 6, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `${r.color}18`, color: r.color }}>
+                <r.icon size={13} strokeWidth={2.25} />
+              </span>
+              <span style={{ flex: 1, fontSize: 12, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.label}</span>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: T.textBright, fontFamily: "'DM Mono',monospace", flexShrink: 0, whiteSpace: "nowrap", textAlign: "right" }}>{r.value}</span>
+            </div>
+          ))}
         </PanelCard>
 
         <PanelCard T={T} title={`Tarefas mais próximas${upcomingTasks.length ? ` (${upcomingTasks.length})` : ""}`} icon={Kanban} iconColor={T.accent} action="Ver quadro" onAction={() => onOpenTarefas && onOpenTarefas()}>
