@@ -4,13 +4,13 @@
 import { memo } from "react";
 import {
   Boxes, Package, Wrench, AlertTriangle, TrendingDown, TrendingUp, Plus, ArrowUpDown,
-  ArrowLeftRight, FileText, ClipboardCheck, Tags, MapPin, Zap, Kanban, CalendarDays,
+  ArrowLeftRight, FileText, ClipboardCheck, Tags, MapPin, Zap, Kanban, CalendarDays, Flag,
 } from "lucide-react";
 import { PanelCard, StatTile, DonutChart, LineChart } from "./pieces.jsx";
 import { DirIcon, CategoryBadge } from "../common.jsx";
 import { tot, isLow, fd, ft, fmtBRL, disponibilidade } from "../../utils.js";
 import { docStatus } from "../documents/helpers.js";
-import { TASK_STATUS } from "../../constants.js";
+import { TASK_STATUS, TASK_PRIORITY } from "../../constants.js";
 
 // "2026-08-31" → "31/08" — as tarefas guardam só a data (sem hora). Mesma
 // função usada em Tarefas.jsx; duplicada aqui (arquivo pequeno, sem import
@@ -168,11 +168,17 @@ function DashboardImpl({ T, items, movs, sectorNames, sectorColor, categoryNames
   }
 
   // Tarefas mais próximas do vencimento — só as que ainda não terminaram,
-  // sem prazo vai pro fim da lista (mesmo critério de ordenação do quadro
-  // Kanban em Tarefas.jsx).
+  // sem prazo vai pro fim da lista; em empate de prazo, a de maior
+  // prioridade aparece primeiro (mesmo critério de ordenação do quadro
+  // Kanban em Tarefas.jsx, só que aqui o prazo continua mandando — este
+  // painel é sobre "o que vence logo", prioridade é só o desempate).
   const upcomingTasks = (tasks || [])
     .filter(t => t.status !== "concluido")
-    .sort((a, b) => (a.prazo || "9999-99-99").localeCompare(b.prazo || "9999-99-99"))
+    .sort((a, b) => {
+      const prazoCmp = (a.prazo || "9999-99-99").localeCompare(b.prazo || "9999-99-99");
+      if (prazoCmp) return prazoCmp;
+      return (TASK_PRIORITY[b.prioridade]?.order ?? TASK_PRIORITY.media.order) - (TASK_PRIORITY[a.prioridade]?.order ?? TASK_PRIORITY.media.order);
+    })
     .slice(0, 6);
 
   const goInv = (patch) => {
@@ -239,13 +245,22 @@ function DashboardImpl({ T, items, movs, sectorNames, sectorColor, categoryNames
             const resp = t.responsaveis || [];
             const statusDot = TASK_STATUS[t.status]?.dot;
             const statusColor = statusDot ? (T.isLight ? statusDot.light : statusDot.dark) : T.textFaint;
+            // Flag de prioridade só se destaca pra alta/urgente — mesmo
+            // critério de "só mostra o que precisa de atenção" do resto do
+            // painel (ver Tarefas.jsx, PersonTaskRow).
+            const pcfg = TASK_PRIORITY[t.prioridade];
+            const showPriority = pcfg && (t.prioridade === "alta" || t.prioridade === "urgente");
+            const pColor = showPriority ? (T.isLight ? pcfg.color.light : pcfg.color.dark) : null;
             return (
               <div key={t.id} className="dash-row" onClick={() => onOpenTarefas && onOpenTarefas()} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 16px", borderBottom: `1px solid ${T.borderSoft}`, cursor: "pointer", animation: "pc-in 300ms ease both", animationDelay: `${Math.min(idx * 35, 280)}ms` }} onMouseEnter={e => e.currentTarget.style.background = T.hover} onMouseLeave={e => e.currentTarget.style.background = ""}>
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor, flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.titulo}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    {showPriority && <Flag size={10} strokeWidth={2.5} style={{ color: pColor, flexShrink: 0 }} />}
+                    <span style={{ fontSize: 12, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.titulo}</span>
+                  </div>
                   <div style={{ fontSize: 10, color: T.textFaint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>
-                    {resp.length ? resp.join(", ") : "Sem responsável"}
+                    {resp.length ? resp.join(", ") : "Sem responsável"}{t.categoria ? ` · ${t.categoria}` : ""}
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, fontWeight: 600, color: urgency.color || T.textFaint, whiteSpace: "nowrap", flexShrink: 0 }}>
