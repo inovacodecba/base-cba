@@ -189,6 +189,19 @@ export const TASK_STATUS = {
   concluido: { label: "Concluído", dot: { light: "#1b9e4b", dark: "#22c55e" } },
 };
 
+// Prioridade das tarefas (10/2026) — 4 níveis fixos, espelhando a CHECK
+// constraint da coluna `prioridade` na tabela `tarefas` (nunca inventar um
+// 5º nível sem atualizar o banco também). `order` serve pra ordenar o
+// quadro (urgente primeiro) sem depender da ordem de inserção do objeto.
+// Mesma régua de cores do "estoque baixo"/"com defeito" do dashboard, pra
+// manter o vocabulário visual de urgência igual em todo o app.
+export const TASK_PRIORITY = {
+  baixa: { label: "Baixa", order: 0, color: { light: "#1b9e4b", dark: "#22c55e" } },
+  media: { label: "Média", order: 1, color: { light: "#a47d06", dark: "#eab308" } },
+  alta: { label: "Alta", order: 2, color: { light: "#b5530a", dark: "#f97316" } },
+  urgente: { label: "Urgente", order: 3, color: { light: "#c21c1c", dark: "#ef4444" } },
+};
+
 // Título exibido na barra superior (desktop) para cada view. "movimentacoes"
 // não tem mais entrada própria aqui — a tela vive dentro de "inventario"
 // agora (ver NAV_ITEMS), então o título mostrado continua "Inventário"
