@@ -221,6 +221,9 @@ export default function App() {
   const [batchQtys, setBatchQtys] = useState({});
   const [batchSearch, setBatchSearch] = useState("");
   const [theme, setTheme] = useState("dark");
+  // Padrão novo (10/2026): "iris" — violeta da identidade visual adotada.
+  // Só afeta instalações novas: quem já tem "inv-accent" salvo no navegador
+  // (linha ~272 abaixo) continua com a cor que escolheu, sem troca forçada.
   const [accentKey, setAccentKey] = useState("iris");
   const [newMember, setNewMember] = useState("");
   const [currentUser, setCurrentUser] = useState(null);
@@ -1376,6 +1379,10 @@ export default function App() {
       background: `linear-gradient(150deg, ${T.bg} 0%, ${T.panel} 50%, ${T.bg} 100%)`,
     }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+      {/* Fundo decorativo: manchas desfocadas + um "blob" em SVG + sparkles
+          que piscam — tudo position:absolute/pointer-events:none, então não
+          interfere em layout, tab order ou cliques. Cores vêm de T.accent
+          (identidade "Íris"), então acompanham a troca de tema automaticamente. */}
       <style>{`
         @keyframes lg-float-a{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(24px,-18px) scale(1.06)}}
         @keyframes lg-float-b{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-20px,20px) scale(1.08)}}
@@ -1416,6 +1423,9 @@ export default function App() {
           </div>
         </div>
         {lbl("Quem é você?")}
+        {/* Campo de texto livre, não mais um <select> com a lista de todos
+            os nomes da equipe visível antes do login — evita que qualquer
+            visitante veja quem trabalha aqui só de abrir a tela. */}
         <input
           type="text"
           autoComplete="username"
@@ -1474,7 +1484,7 @@ export default function App() {
         input:focus-visible,select:focus-visible,textarea:focus-visible{outline-offset:0}
 
         /* ── layout: sidebar (desktop) x barra inferior (mobile) ────────── */
-        .main-content{margin-left:226px;min-height:100vh;display:flex;flex-direction:column}
+        .main-content{margin-left:264px;min-height:100vh;display:flex;flex-direction:column}
         .mobile-topbar{display:none}
         .mobile-bottom-nav{display:none}
         @media(max-width:960px){
