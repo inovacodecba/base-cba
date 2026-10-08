@@ -3,13 +3,45 @@
 // centralizada no App.jsx, seguindo o padrão container/presentational.
 import { memo } from "react";
 import {
-  Boxes, Package, Wrench, AlertTriangle, TrendingDown, Plus, ArrowUpDown,
-  ArrowLeftRight, FileText, ClipboardCheck,
+  Boxes, Package, Wrench, AlertTriangle, TrendingDown, TrendingUp, Plus, ArrowUpDown,
+  ArrowLeftRight, FileText, ClipboardCheck, Tags, MapPin, Zap, Kanban, CalendarDays,
 } from "lucide-react";
-import { PanelCard, StatTile, DonutChart } from "./pieces.jsx";
+import { PanelCard, StatTile, DonutChart, LineChart } from "./pieces.jsx";
 import { DirIcon, CategoryBadge } from "../common.jsx";
 import { tot, isLow, fd, ft, fmtBRL, disponibilidade } from "../../utils.js";
 import { docStatus } from "../documents/helpers.js";
+import { TASK_STATUS } from "../../constants.js";
+
+// "2026-08-31" → "31/08" — as tarefas guardam só a data (sem hora). Mesma
+// função usada em Tarefas.jsx; duplicada aqui (arquivo pequeno, sem import
+// cruzado entre features) em vez de promovida pra utils.js — não há ainda
+// um terceiro lugar que precise dela pra justificar a extração.
+const fmtPrazo = (iso) => {
+  if (!iso) return "";
+  const [, m, d] = iso.split("-");
+  return `${d}/${m}`;
+};
+
+// Urgência do prazo de uma tarefa — mesma régua de cores do quadro Kanban
+// (atrasada/hoje/próxima/normal), só que resumida pro card da Visão Geral.
+function taskUrgency(prazo) {
+  if (!prazo) return { label: "Sem prazo", color: null };
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const d = new Date(`${prazo}T00:00:00`);
+  const days = Math.round((d - today) / 86400000);
+  if (days < 0) return { label: `Atrasada · ${fmtPrazo(prazo)}`, color: "#ef4444" };
+  if (days === 0) return { label: "Hoje", color: "#f97316" };
+  if (days <= 2) return { label: `${fmtPrazo(prazo)} · em ${days}d`, color: "#eab308" };
+  return { label: fmtPrazo(prazo), color: null };
+}
+
+// Chave "AAAA-MM-DD" no horário LOCAL do navegador (não UTC). Usar
+// toISOString() aqui jogaria movimentações feitas depois das 21h (UTC-3)
+// para o dia seguinte no gráfico de fluxo.
+const dayKey = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+// date_iso pode vir só com a data ("2026-10-08") ou com hora completa — só a
+// segunda precisa ser convertida pro fuso local.
+const movDayKey = iso => (iso.length === 10 ? iso : dayKey(new Date(iso)));
 
 const isDefect = i => i.condicao === "defeito" || i.condicao === "defeito parcial";
 
@@ -21,7 +53,7 @@ const isDefect = i => i.condicao === "defeito" || i.condicao === "defeito parcia
 // esse trabalho repetido.
 // `categoryNames`/`catColor` vêm do App.jsx (categorias agora são dinâmicas,
 // geridas em "Categorias" — mesmo padrão de `sectorNames`/`sectorColor`).
-function DashboardImpl({ T, items, movs, sectorNames, sectorColor, categoryNames, catColor, setView, setInvStatus, setInvCategoria, setInvSector, setInvSearch, onNewItem, onOpenBatch, onOpenReports, onResolve, trainingAlerts, currentUser, isAdmin, onOpenTreinamentos, showToast }) {
+function DashboardImpl({ T, items, movs, sectorNames, sectorColor, categoryNames, catColor, setView, setInvStatus, setInvCategoria, setInvSector, setInvSearch, onNewItem, onOpenBatch, onOpenReports, onResolve, trainingAlerts, currentUser, isAdmin, onOpenTreinamentos, tasks, onOpenTarefas, showToast }) {
   const totalAll = items.reduce((s, i) => s + tot(i), 0);
 
   // Partição mutuamente exclusiva do total, para o donut "Status do Inventário".
@@ -115,6 +147,34 @@ function DashboardImpl({ T, items, movs, sectorNames, sectorColor, categoryNames
   const defTrend = weeklyDelta(idSet(defItems));
   const baixoTrend = weeklyDelta(idSet(baixoItems));
 
+  // Fluxo de estoque (14 dias) — mesmo princípio do weeklyDelta acima, mas
+  // granular por dia (em vez de um único total) pra alimentar o gráfico de
+  // linha entradas × saídas. Dias sempre no fuso local (ver dayKey).
+  const flowDays = Array.from({ length: 14 }, (_, i) => {
+    const d = new Date(); d.setDate(d.getDate() - (13 - i)); d.setHours(0, 0, 0, 0);
+    return d;
+  });
+  const flowKeys = flowDays.map(dayKey);
+  const flowLabels = flowDays.map(d => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`);
+  const flowIndex = new Map(flowKeys.map((k, i) => [k, i]));
+  const entradaSeries = flowKeys.map(() => 0);
+  const saidaSeries = flowKeys.map(() => 0);
+  for (const m of movs) {
+    if (!m.date_iso || (m.dir !== "entrada" && m.dir !== "saida")) continue;
+    const idx = flowIndex.get(movDayKey(m.date_iso));
+    if (idx === undefined) continue;
+    if (m.dir === "entrada") entradaSeries[idx] += m.qty;
+    else saidaSeries[idx] += m.qty;
+  }
+
+  // Tarefas mais próximas do vencimento — só as que ainda não terminaram,
+  // sem prazo vai pro fim da lista (mesmo critério de ordenação do quadro
+  // Kanban em Tarefas.jsx).
+  const upcomingTasks = (tasks || [])
+    .filter(t => t.status !== "concluido")
+    .sort((a, b) => (a.prazo || "9999-99-99").localeCompare(b.prazo || "9999-99-99"))
+    .slice(0, 6);
+
   const goInv = (patch) => {
     if (patch.status !== undefined) setInvStatus(patch.status);
     if (patch.categoria !== undefined) setInvCategoria(patch.categoria);
@@ -123,8 +183,29 @@ function DashboardImpl({ T, items, movs, sectorNames, sectorColor, categoryNames
     setView("inventario");
   };
 
+  // Saudação com base no horário local do navegador — só um toque pessoal
+  // no topo da Visão Geral (adaptado ao uso real: sem busca/"data range"
+  // decorativos que não têm função aqui, diferente do painel de referência).
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Bom dia" : hour < 18 ? "Boa tarde" : "Boa noite";
+  const firstName = currentUser ? currentUser.trim().split(" ")[0] : "";
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <style>{`
+        @keyframes dash-greet-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+        .dash-greet{animation:dash-greet-in 320ms ease both}
+        .qa-btn{transition:transform 160ms ease,border-color 160ms ease,box-shadow 160ms ease}
+        .qa-btn:hover{transform:translateY(-2px);box-shadow:0 8px 18px -8px rgba(0,0,0,.3)}
+        .qa-btn:active{transform:translateY(0) scale(.98)}
+        .dash-row{transition:background 150ms ease}
+      `}</style>
+
+      <div className="dash-greet">
+        <div style={{ fontSize: 17, fontWeight: 700, color: T.textBright }}>{greeting}{firstName ? `, ${firstName}` : ""}</div>
+        <div style={{ fontSize: 12, color: T.textFaint, marginTop: 2 }}>Aqui está o resumo do estoque hoje.</div>
+      </div>
+
       <div className="mob-grid-5" style={{ display: "grid", gap: 10 }}>
         {/* Rótulo "Total de unidades" (não "itens") porque o número é a SOMA de
             quantidade física de todos os tipos cadastrados — "itens" sozinho
@@ -132,15 +213,53 @@ function DashboardImpl({ T, items, movs, sectorNames, sectorColor, categoryNames
             "X tipos" já mostra. Padronização de terminologia: tipo de item
             (registro/SKU) vs. unidade (peça física) nunca devem se confundir
             no mesmo número. */}
-        <StatTile T={T} icon={Boxes} label="Total de unidades" value={totalAll} sub={`${items.length} tipos de item`} color={T.accent} trend={{ value: totalTrend }} onClick={() => goInv({ status: "todos", categoria: "Todas", sector: "Todos", search: "" })} />
-        <StatTile T={T} icon={Package} label="Em estoque" value={qEstoque} sub={`${pct(qEstoque)}% do total`} color="#eab308" trend={{ value: estoqueTrend }} onClick={() => goInv({ status: "todos" })} />
-        <StatTile T={T} icon={Wrench} label="Em uso" value={qUso} sub={`${pct(qUso)}% do total`} color="#3b82f6" trend={{ value: usoTrend }} onClick={() => goInv({ status: "uso-parcial" })} />
-        <StatTile T={T} icon={AlertTriangle} label="Com defeito" value={qDefeito} sub={`${pct(qDefeito)}% do total`} color="#ef4444" trend={{ value: defTrend }} onClick={() => goInv({ status: "defeituosos" })} />
-        <StatTile T={T} icon={TrendingDown} label="Estoque baixo" value={qBaixo} sub={`${pct(qBaixo)}% do total`} color="#f97316" trend={{ value: baixoTrend }} onClick={() => goInv({ status: "baixo" })} />
+        <StatTile T={T} icon={Boxes} label="Total de unidades" value={totalAll} sub={`${items.length} tipos de item`} color={T.accent} trend={{ value: totalTrend }} onClick={() => goInv({ status: "todos", categoria: "Todas", sector: "Todos", search: "" })} delay={0} />
+        <StatTile T={T} icon={Package} label="Em estoque" value={qEstoque} sub={`${pct(qEstoque)}% do total`} color="#eab308" trend={{ value: estoqueTrend }} onClick={() => goInv({ status: "todos" })} delay={40} />
+        <StatTile T={T} icon={Wrench} label="Em uso" value={qUso} sub={`${pct(qUso)}% do total`} color="#3b82f6" trend={{ value: usoTrend }} onClick={() => goInv({ status: "uso-parcial" })} delay={80} />
+        <StatTile T={T} icon={AlertTriangle} label="Com defeito" value={qDefeito} sub={`${pct(qDefeito)}% do total`} color="#ef4444" trend={{ value: defTrend }} onClick={() => goInv({ status: "defeituosos" })} delay={120} />
+        <StatTile T={T} icon={TrendingDown} label="Estoque baixo" value={qBaixo} sub={`${pct(qBaixo)}% do total`} color="#f97316" trend={{ value: baixoTrend }} onClick={() => goInv({ status: "baixo" })} delay={160} />
+      </div>
+
+      <div className="dash-flow" style={{ display: "grid", gap: 14 }}>
+        <PanelCard T={T} title="Fluxo de estoque (14 dias)" icon={TrendingUp} iconColor="#22c55e">
+          <LineChart
+            T={T}
+            labels={flowLabels}
+            series={[
+              { label: "Entradas", color: "#22c55e", points: entradaSeries },
+              { label: "Saídas", color: "#ef4444", points: saidaSeries },
+            ]}
+          />
+        </PanelCard>
+
+        <PanelCard T={T} title={`Tarefas mais próximas${upcomingTasks.length ? ` (${upcomingTasks.length})` : ""}`} icon={Kanban} iconColor={T.accent} action="Ver quadro" onAction={() => onOpenTarefas && onOpenTarefas()}>
+          {upcomingTasks.length === 0 && <div style={{ padding: "24px 16px", fontSize: 12, color: T.textFaint, textAlign: "center" }}>Nenhuma tarefa em aberto.</div>}
+          {upcomingTasks.length > 0 && upcomingTasks.map((t, idx) => {
+            const urgency = taskUrgency(t.prazo);
+            const resp = t.responsaveis || [];
+            const statusDot = TASK_STATUS[t.status]?.dot;
+            const statusColor = statusDot ? (T.isLight ? statusDot.light : statusDot.dark) : T.textFaint;
+            return (
+              <div key={t.id} className="dash-row" onClick={() => onOpenTarefas && onOpenTarefas()} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 16px", borderBottom: `1px solid ${T.borderSoft}`, cursor: "pointer", animation: "pc-in 300ms ease both", animationDelay: `${Math.min(idx * 35, 280)}ms` }} onMouseEnter={e => e.currentTarget.style.background = T.hover} onMouseLeave={e => e.currentTarget.style.background = ""}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor, flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.titulo}</div>
+                  <div style={{ fontSize: 10, color: T.textFaint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>
+                    {resp.length ? resp.join(", ") : "Sem responsável"}
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, fontWeight: 600, color: urgency.color || T.textFaint, whiteSpace: "nowrap", flexShrink: 0 }}>
+                  {t.prazo && <CalendarDays size={11} strokeWidth={2.25} style={{ opacity: .8 }} />}
+                  {urgency.label}
+                </div>
+              </div>
+            );
+          })}
+        </PanelCard>
       </div>
 
       <div className="dash-panels" style={{ display: "grid", gap: 14 }}>
-        <PanelCard T={T} title={`Itens com atenção${attentionTotal ? ` (${attentionTotal})` : ""}`} action="Ver inventário" onAction={() => setView("inventario")}>
+        <PanelCard T={T} title={`Itens com atenção${attentionTotal ? ` (${attentionTotal})` : ""}`} icon={AlertTriangle} iconColor="#ef4444" action="Ver inventário" onAction={() => setView("inventario")}>
           {attentionTotal === 0 && <div style={{ padding: "24px 16px", fontSize: 12, color: T.textFaint, textAlign: "center" }}>Nenhum item precisa de atenção agora.</div>}
           {attentionTotal > 0 && (
             <div style={{ maxHeight: 360, overflowY: "auto" }}>
@@ -149,12 +268,12 @@ function DashboardImpl({ T, items, movs, sectorNames, sectorColor, categoryNames
                   <div style={{ padding: "6px 16px", fontSize: 9.5, fontWeight: 700, color: g.color, textTransform: "uppercase", letterSpacing: .5, background: T.panelAlt }}>
                     {g.label} ({g.items.length})
                   </div>
-                  {g.items.map(i => {
+                  {g.items.map((i, idx) => {
                     const isTraining = g.kind === "training";
                     const title = isTraining ? i.documento : i.name;
                     const handleClick = isTraining ? () => onOpenTreinamentos && onOpenTreinamentos() : () => goInv({ search: i.name });
                     return (
-                      <div key={i.id} onClick={handleClick} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 16px", borderBottom: `1px solid ${T.borderSoft}`, cursor: "pointer", transition: "background 180ms ease" }} onMouseEnter={e => e.currentTarget.style.background = T.hover} onMouseLeave={e => e.currentTarget.style.background = ""}>
+                      <div key={i.id} onClick={handleClick} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 16px", borderBottom: `1px solid ${T.borderSoft}`, cursor: "pointer", transition: "background 180ms ease", animation: "pc-in 300ms ease both", animationDelay: `${Math.min(idx * 35, 280)}ms` }} onMouseEnter={e => e.currentTarget.style.background = T.hover} onMouseLeave={e => e.currentTarget.style.background = ""}>
                         <span style={{ width: 26, height: 26, borderRadius: 6, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `${g.color}18`, color: g.color }}>
                           <AlertTriangle size={13} strokeWidth={2.25} />
                         </span>
@@ -202,13 +321,13 @@ function DashboardImpl({ T, items, movs, sectorNames, sectorColor, categoryNames
           )}
         </PanelCard>
 
-        <PanelCard T={T} title="Movimentações recentes" action="Ver todas" onAction={() => setView("movimentacoes")}>
+        <PanelCard T={T} title="Movimentações recentes" icon={ArrowLeftRight} iconColor={T.accent} action="Ver todas" onAction={() => setView("movimentacoes")}>
           {movs.length === 0 && <div style={{ padding: "24px 16px", fontSize: 12, color: T.textFaint, textAlign: "center" }}>Nenhuma movimentação registrada.</div>}
-          {movs.slice(0, 7).map(m => {
+          {movs.slice(0, 7).map((m, idx) => {
             const isIn = m.dir === "entrada", isTr = m.dir === "transferencia", isSt = m.dir === "status";
             const mc = isIn ? "#22c55e" : isTr ? T.accent : isSt ? "#eab308" : "#ef4444";
             return (
-              <div key={m.id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 16px", borderBottom: `1px solid ${T.borderSoft}` }}>
+              <div key={m.id} className="dash-row" style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 16px", borderBottom: `1px solid ${T.borderSoft}`, animation: "pc-in 300ms ease both", animationDelay: `${Math.min(idx * 35, 280)}ms` }} onMouseEnter={e => e.currentTarget.style.background = T.hover} onMouseLeave={e => e.currentTarget.style.background = ""}>
                 <div style={{ width: 26, height: 26, borderRadius: 6, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `${mc}15`, color: mc }}>
                   <DirIcon dir={m.dir} />
                 </div>
@@ -230,17 +349,17 @@ function DashboardImpl({ T, items, movs, sectorNames, sectorColor, categoryNames
       </div>
 
       <div className="dash-donuts" style={{ display: "grid", gap: 14 }}>
-        <PanelCard T={T} title="Status do Inventário">
+        <PanelCard T={T} title="Status do Inventário" icon={Boxes} iconColor={T.accent}>
           <div style={{ padding: 16 }}>
             <DonutChart T={T} data={statusData} centerValue={totalAll} centerLabel="Total" />
           </div>
         </PanelCard>
-        <PanelCard T={T} title="Distribuição por Categoria" action="Ver todas" onAction={() => goInv({ categoria: "Todas" })}>
+        <PanelCard T={T} title="Distribuição por Categoria" icon={Tags} iconColor="#8b5cf6" action="Ver todas" onAction={() => goInv({ categoria: "Todas" })}>
           <div style={{ padding: 16 }}>
             <DonutChart T={T} data={catData} centerValue={items.length} centerLabel="tipos" />
           </div>
         </PanelCard>
-        <PanelCard T={T} title="Distribuição por Setor">
+        <PanelCard T={T} title="Distribuição por Setor" icon={MapPin} iconColor="#06b6d4">
           <div style={{ padding: 16 }}>
             <DonutChart T={T} data={sectorData} centerValue={totalAll} centerLabel="unidades" />
           </div>
@@ -248,13 +367,13 @@ function DashboardImpl({ T, items, movs, sectorNames, sectorColor, categoryNames
       </div>
 
       {itemsComValor.length > 0 && (
-        <PanelCard T={T} title="Top categorias por valor" action="Ver inventário" onAction={() => setView("inventario")}>
+        <PanelCard T={T} title="Top categorias por valor" icon={TrendingUp} iconColor="#16a34a" action="Ver inventário" onAction={() => setView("inventario")}>
           <div style={{ padding: "6px 16px 16px" }}>
             <div style={{ fontSize: 10, color: T.textFaint, marginBottom: 12 }}>
               Baseado em {itemsComValor.length} {itemsComValor.length === 1 ? "item com valor estimado" : "itens com valor estimado"} — os demais ainda não têm preço cadastrado.
             </div>
-            {catValue.map(c => (
-              <div key={c.label} style={{ marginBottom: 10 }}>
+            {catValue.map((c, idx) => (
+              <div key={c.label} style={{ marginBottom: 10, animation: "pc-in 360ms ease both", animationDelay: `${Math.min(idx * 50, 300)}ms` }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: T.text }}>{c.label}</span>
                   <span style={{ fontSize: 12, fontFamily: "'DM Mono',monospace", fontWeight: 700, color: c.total > 0 ? T.textBright : T.textFaint }}>
@@ -262,7 +381,7 @@ function DashboardImpl({ T, items, movs, sectorNames, sectorColor, categoryNames
                   </span>
                 </div>
                 <div style={{ height: 6, borderRadius: 3, background: T.panelAlt, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${(c.total / maxCatValue) * 100}%`, background: c.color, borderRadius: 3 }} />
+                  <div style={{ height: "100%", width: `${(c.total / maxCatValue) * 100}%`, background: c.color, borderRadius: 3, transition: "width 900ms cubic-bezier(.2,.8,.2,1)", transitionDelay: `${100 + idx * 50}ms` }} />
                 </div>
                 <div style={{ fontSize: 9, color: T.textFaint, marginTop: 2 }}>{c.precificados} de {c.totalItens} itens precificados</div>
               </div>
@@ -271,7 +390,7 @@ function DashboardImpl({ T, items, movs, sectorNames, sectorColor, categoryNames
         </PanelCard>
       )}
 
-      <PanelCard T={T} title="Ações rápidas">
+      <PanelCard T={T} title="Ações rápidas" icon={Zap} iconColor="#eab308">
         <div className="quick-actions" style={{ display: "grid", gap: 10, padding: 14 }}>
           {[
             { l: "Novo Item", sub: "Adicionar ao inventário", icon: Plus, c: T.accent, fn: onNewItem },
@@ -280,7 +399,7 @@ function DashboardImpl({ T, items, movs, sectorNames, sectorColor, categoryNames
             { l: "Relatórios", sub: "Gerar relatórios", icon: FileText, c: "#06b6d4", fn: onOpenReports },
             { l: "Inventário físico", sub: "Iniciar contagem", icon: ClipboardCheck, c: "#f97316", fn: () => showToast("Contagem de inventário físico — em breve", "warn") },
           ].map((a, i) => (
-            <button key={i} onClick={a.fn} style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: 7, border: `1px solid ${T.border}`, background: T.panelAlt, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+            <button key={i} className="qa-btn" onClick={a.fn} style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: 10, border: `1px solid ${T.border}`, background: T.panelAlt, cursor: "pointer", fontFamily: "inherit", textAlign: "left", animation: "pc-in 320ms ease both", animationDelay: `${i * 40}ms` }}>
               <span style={{ width: 28, height: 28, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", background: `${a.c}18`, color: a.c }}><a.icon size={14} strokeWidth={2.25} /></span>
               <div>
                 <div style={{ fontSize: 11.5, fontWeight: 700, color: T.textBright }}>{a.l}</div>
