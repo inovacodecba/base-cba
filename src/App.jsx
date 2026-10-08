@@ -1491,6 +1491,7 @@ export default function App() {
         .mob-grid-3{grid-template-columns:repeat(3,1fr)}
         .dash-donuts{grid-template-columns:repeat(3,1fr)}
         .dash-panels{grid-template-columns:1fr 1fr}
+        .dash-flow{grid-template-columns:2fr 1fr}
         .quick-actions{grid-template-columns:repeat(5,1fr)}
         /* Quadro "Tarefas": 3 colunas lado a lado no desktop; empilha em 1
            coluna no celular (cada coluna já rola internamente por si — ver
@@ -1507,6 +1508,7 @@ export default function App() {
         }
         @media(max-width:920px){
           .dash-panels{grid-template-columns:1fr!important}
+          .dash-flow{grid-template-columns:1fr!important}
           .inv-flt,.mov-flt{grid-template-columns:1fr 1fr!important}
           .inv-panel{overflow-x:auto!important}
           .inv-panel table{min-width:560px!important}
@@ -1618,6 +1620,8 @@ export default function App() {
               ADMIN={ADMIN}
               isAdmin={isAdminUser}
               onOpenTreinamentos={openTreinamentos}
+              tasks={tasks}
+              onOpenTarefas={() => setView("tarefas")}
               showToast={showToast}
             />
           )}
