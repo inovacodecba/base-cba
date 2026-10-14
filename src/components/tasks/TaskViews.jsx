@@ -111,6 +111,7 @@ export function CalendarioView({ T, tasks, onOpen }) {
   const today = todayIso();
   const [month, setMonth] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const [selected, setSelected] = useState(today);
+  const [dir, setDir] = useState(0); // direção da última troca de mês (anima o calendário pro lado certo)
 
   const byDay = useMemo(() => {
     const map = {};
@@ -127,7 +128,7 @@ export function CalendarioView({ T, tasks, onOpen }) {
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
   while (cells.length % 7) cells.push(null);
 
-  const shift = (n) => setMonth(({ y, m }) => { const d = new Date(y, m + n, 1); return { y: d.getFullYear(), m: d.getMonth() }; });
+  const shift = (n) => { setDir(n); setMonth(({ y, m }) => { const d = new Date(y, m + n, 1); return { y: d.getFullYear(), m: d.getMonth() }; }); };
   const goToday = () => { const d = new Date(); setMonth({ y: d.getFullYear(), m: d.getMonth() }); setSelected(today); };
   const selectedList = byDay[selected] || [];
   const navBtn = { width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 8, border: `1px solid ${T.border}`, background: "transparent", color: T.text, cursor: "pointer" };
@@ -144,7 +145,7 @@ export function CalendarioView({ T, tasks, onOpen }) {
         <div className="tk-cal" style={{ marginBottom: 4 }}>
           {WEEKDAYS.map(w => <div key={w} style={{ fontSize: 10.5, fontWeight: 700, color: T.textFaint, textAlign: "center", padding: "2px 0" }}>{w}</div>)}
         </div>
-        <div className="tk-cal">
+        <div key={`${month.y}-${month.m}`} className={`tk-cal${dir < 0 ? " tk-cal-anim-l" : dir > 0 ? " tk-cal-anim-r" : ""}`}>
           {cells.map((d, i) => {
             if (d == null) return <div key={`e${i}`} />;
             const key = iso(month.y, month.m, d);
@@ -192,7 +193,7 @@ export function CalendarioView({ T, tasks, onOpen }) {
         </div>
         {selectedList.length === 0 && <div style={{ fontSize: 12, color: T.textFaint, padding: "6px 0" }}>Nada com prazo neste dia.</div>}
         {selectedList.map(t => (
-          <button key={t.id} onClick={() => onOpen(t.id)} className="tk-row" style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 6px", border: "none", background: "transparent", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+          <button key={`${selected}-${t.id}`} onClick={() => onOpen(t.id)} className="tk-row tk-item-in" style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 6px", border: "none", background: "transparent", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
             <span title={TASK_STATUS[t.status]?.label} style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor(T, t.status), flexShrink: 0 }} />
             <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: t.status === "concluido" ? T.textFaint : T.text, textDecoration: t.status === "concluido" ? "line-through" : "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.titulo}</span>
             <AvatarStack T={T} names={t.responsaveis || []} size={17} />

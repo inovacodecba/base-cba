@@ -18,7 +18,7 @@
 // Subtarefas: no Quadro e na Tabela aparecem só as tarefas "de cima" (com o
 // progresso das filhas no card), pra não encher o quadro — o filtro
 // "Mostrar subtarefas" (ou uma busca) traz as filhas também.
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useLayoutEffect, useRef } from "react";
 import {
   Plus, ChevronLeft, ChevronRight, CalendarDays, ClipboardCheck, Kanban, Users, ArrowRight, CheckCircle2, Tag, Table2,
   CalendarRange, FolderKanban, Search, SlidersHorizontal, X, ListTree, Paperclip, CornerDownRight,
@@ -46,6 +46,38 @@ const readTab = () => { try { const v = localStorage.getItem(TAB_KEY); return TA
 
 const EMPTY_FILTERS = { resp: "todos", status: "todos", prio: "todas", projeto: "todos", cat: "todas", prazo: "todos", subs: false };
 
+// Abas com uma pílula que desliza até a aba ativa (mede a posição real do
+// botão, então funciona mesmo com a barra rolando de lado no celular).
+function TabBar({ T, tab, setTab }) {
+  const refs = useRef({});
+  const trackRef = useRef(null);
+  const [pill, setPill] = useState(null);
+  useLayoutEffect(() => {
+    const measure = () => {
+      const el = refs.current[tab];
+      if (el) setPill({ x: el.offsetLeft, w: el.offsetWidth });
+    };
+    measure();
+    refs.current[tab]?.scrollIntoView?.({ block: "nearest", inline: "nearest", behavior: "smooth" });
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [tab]);
+  return (
+    <div ref={trackRef} className="tk-tabs" role="tablist" style={{ position: "relative" }}>
+      {pill && <span className="tk-tab-pill" style={{ left: 0, width: pill.w, transform: `translateX(${pill.x}px)` }} />}
+      {TABS.map(({ key, label, icon: Icon }) => {
+        const on = tab === key;
+        return (
+          <button key={key} ref={el => { refs.current[key] = el; }} role="tab" aria-selected={on} onClick={() => setTab(key)} className="tk-chip-btn" style={{
+            position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 7, border: "none", cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
+            fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, background: "transparent", color: on ? T.accent : T.textMuted,
+          }}><Icon size={14} /> {label}</button>
+        );
+      })}
+    </div>
+  );
+}
+
 // Caixinha de info rotulada (label pequeno em cima, valor embaixo).
 function InfoBox({ T, label, children }) {
   return (
@@ -56,7 +88,7 @@ function InfoBox({ T, label, children }) {
   );
 }
 
-function TaskCard({ T, btn, ghost, task, allTasks, project, parentTitle, isMine, onOpen, onMove, onDragStart, onDragEnd, isDragging, isFirst, isLast, delay }) {
+function TaskCard({ T, btn, ghost, task, allTasks, project, parentTitle, isMine, flash, onOpen, onMove, onDragStart, onDragEnd, isDragging, isFirst, isLast, delay }) {
   const due = dueInfo(task.prazo, T, task.status);
   const responsaveis = task.responsaveis || [];
   const leadInitial = responsaveis[0] ? responsaveis[0].trim().slice(0, 1).toUpperCase() : null;
@@ -64,7 +96,7 @@ function TaskCard({ T, btn, ghost, task, allTasks, project, parentTitle, isMine,
   const nAnexos = Array.isArray(task.anexos) ? task.anexos.length : 0;
   return (
     <div
-      className={`tk-card${isDragging ? " tk-dragging" : ""}`}
+      className={`tk-card${isDragging ? " tk-dragging" : ""}${flash ? " tk-flash" : ""}`}
       draggable
       onDragStart={e => onDragStart(e, task.id)}
       onDragEnd={onDragEnd}
@@ -211,8 +243,8 @@ function FilterBar({ T, q, setQ, filters, setFilters, team, projects, categories
           <SlidersHorizontal size={14} /> Filtros{active ? ` (${active})` : ""}
         </button>
       </div>
-      {open && (
-        <div className="tk-view" style={{ background: T.panel, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10 }}>
+      <div className={`tk-collapse${open ? " open" : ""}`}><div>
+        <div style={{ background: T.panel, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10 }}>
           <div>{lbl("Responsável")}
             <select value={filters.resp} onChange={set("resp")} style={inp()}>
               <option value="todos">Todos</option>
@@ -266,7 +298,7 @@ function FilterBar({ T, q, setQ, filters, setFilters, team, projects, categories
             <button onClick={() => setFilters(EMPTY_FILTERS)} style={{ ...ghost(), alignSelf: "end", color: "#ef4444", borderColor: "#ef444430" }}>Limpar filtros</button>
           )}
         </div>
-      )}
+      </div></div>
     </div>
   );
 }
@@ -319,6 +351,8 @@ export function Tarefas({ T, tasks, projects, team, currentUser, myUid, isAdmin,
   const [form, setForm] = useState(null);
   const [dragId, setDragId] = useState(null);
   const [dragOverCol, setDragOverCol] = useState(null);
+  const [movedId, setMovedId] = useState(null); // card que acabou de mudar de coluna (pisca uma vez)
+  useEffect(() => { if (movedId == null) return; const t = setTimeout(() => setMovedId(null), 1200); return () => clearTimeout(t); }, [movedId]);
   const [q, setQ] = useState("");
   const [filters, setFilters] = useState(EMPTY_FILTERS);
 
@@ -353,13 +387,13 @@ export function Tarefas({ T, tasks, projects, team, currentUser, myUid, isAdmin,
 
   const moveTask = (task, dir) => {
     const next = COLS[COLS.indexOf(task.status) + dir];
-    if (next) api.updateStatus(task.id, next);
+    if (next) { setMovedId(task.id); api.updateStatus(task.id, next); }
   };
   const onDragStart = (e, id) => { setDragId(id); e.dataTransfer.effectAllowed = "move"; };
   const onDragEnd = () => { setDragId(null); setDragOverCol(null); };
   const onDropCol = (e, col) => {
     e.preventDefault();
-    if (dragId != null) api.updateStatus(dragId, col);
+    if (dragId != null) { setMovedId(dragId); api.updateStatus(dragId, col); }
     setDragId(null); setDragOverCol(null);
   };
 
@@ -401,18 +435,7 @@ export function Tarefas({ T, tasks, projects, team, currentUser, myUid, isAdmin,
     <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
       <TaskStyles T={T} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <div className="tk-tabs" role="tablist">
-          {TABS.map(({ key, label, icon: Icon }) => {
-            const on = tab === key;
-            return (
-              <button key={key} role="tab" aria-selected={on} onClick={() => setTab(key)} className="tk-chip-btn" style={{
-                display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 7, border: "none", cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
-                fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, background: on ? T.panel : "transparent", color: on ? T.accent : T.textMuted,
-                boxShadow: on ? "0 1px 4px rgba(0,0,0,.18)" : "none",
-              }}><Icon size={14} /> {label}</button>
-            );
-          })}
-        </div>
+        <TabBar T={T} tab={tab} setTab={setTab} />
         {tab === "projetos"
           ? <button onClick={() => setProjectModal(true)} className="tk-pill-btn" style={{ ...btn(T.accent), borderRadius: 999, display: "flex", alignItems: "center", gap: 6, padding: "9px 16px" }}><Plus size={14} strokeWidth={2.5} /> Novo Projeto</button>
           : <button onClick={openNew} className="tk-pill-btn" style={{ ...btn(T.accent), borderRadius: 999, display: "flex", alignItems: "center", gap: 6, padding: "9px 16px" }}><Plus size={14} strokeWidth={2.5} /> Nova Tarefa</button>}
@@ -432,7 +455,7 @@ export function Tarefas({ T, tasks, projects, team, currentUser, myUid, isAdmin,
               return (
                 <div
                   key={col}
-                  className="tk-col"
+                  className={`tk-col${dragOverCol === col ? " tk-drop" : ""}`}
                   onDragOver={e => { e.preventDefault(); setDragOverCol(col); }}
                   onDragLeave={() => setDragOverCol(p => p === col ? null : p)}
                   onDrop={e => onDropCol(e, col)}
@@ -450,7 +473,7 @@ export function Tarefas({ T, tasks, projects, team, currentUser, myUid, isAdmin,
                         key={t.id} T={T} btn={btn} ghost={ghost} task={t} allTasks={tasks}
                         project={t.projeto_id ? projectsById[t.projeto_id] : null}
                         parentTitle={t.parent_id ? tasksById[t.parent_id]?.titulo : null}
-                        isMine={(t.responsaveis || []).includes(currentUser)}
+                        isMine={(t.responsaveis || []).includes(currentUser)} flash={movedId === t.id}
                         onOpen={goTask} onMove={moveTask} onDragStart={onDragStart} onDragEnd={onDragEnd} isDragging={dragId === t.id}
                         isFirst={COLS.indexOf(t.status) === 0} isLast={COLS.indexOf(t.status) === COLS.length - 1} delay={Math.min(i * 40, 240)}
                       />

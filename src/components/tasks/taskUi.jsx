@@ -139,7 +139,7 @@ export function ProgressBar({ T, done, total, color, height = 6 }) {
   const pct = total ? Math.round((done / total) * 100) : 0;
   return (
     <div style={{ height, borderRadius: height, background: T.panelAlt2, overflow: "hidden", flex: 1, minWidth: 40 }}>
-      <div style={{ width: `${pct}%`, height: "100%", borderRadius: height, background: color || T.accent, transition: "width 260ms ease" }} />
+      <div className="tk-bar" style={{ width: `${pct}%`, height: "100%", borderRadius: height, background: color || T.accent, transition: "width 420ms cubic-bezier(.2,.8,.2,1)" }} />
     </div>
   );
 }
@@ -232,6 +232,32 @@ export function TaskStyles({ T }) {
       .tk-cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
       .tk-cal-day{min-height:92px}
       .tk-cal-dots{display:none}
+      /* ── movimento extra (10/2026, "mais fluido") ── */
+      @keyframes tk-page-in{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:none}}
+      .tk-page{animation:tk-page-in 340ms cubic-bezier(.2,.8,.2,1) both}
+      @keyframes tk-item-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+      .tk-item-in{animation:tk-item-in 240ms cubic-bezier(.2,.8,.2,1) both}
+      @keyframes tk-flash{0%{box-shadow:0 0 0 0 ${T.accent}88}60%{box-shadow:0 0 0 6px ${T.accent}00}100%{box-shadow:0 0 0 0 ${T.accent}00}}
+      .tk-card.tk-flash{animation:tk-card-in 320ms cubic-bezier(.2,.8,.2,1) both,tk-flash 900ms ease-out 120ms}
+      @keyframes tk-grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+      .tk-bar{transform-origin:left;animation:tk-grow 700ms cubic-bezier(.2,.8,.2,1) both}
+      .tk-tab-pill{position:absolute;top:3px;bottom:3px;border-radius:7px;background:${T.panel};box-shadow:0 1px 4px rgba(0,0,0,.18);transition:transform 360ms cubic-bezier(.34,1.25,.64,1),width 360ms cubic-bezier(.34,1.25,.64,1);pointer-events:none}
+      .tk-collapse{display:grid;grid-template-rows:0fr;transition:grid-template-rows 300ms cubic-bezier(.2,.8,.2,1),opacity 220ms ease;opacity:0}
+      .tk-collapse.open{grid-template-rows:1fr;opacity:1}
+      .tk-collapse > div{overflow:hidden;min-height:0}
+      .tk-check{appearance:none;-webkit-appearance:none;width:18px;height:18px;border-radius:5px;border:1.6px solid ${T.textFaint};background:transparent;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:background 180ms ease,border-color 180ms ease,transform 180ms cubic-bezier(.34,1.56,.64,1);margin:0}
+      .tk-check:checked{background:${T.accent};border-color:${T.accent};transform:scale(1.08)}
+      .tk-check:checked::after{content:"";width:5px;height:9px;border:solid #fff;border-width:0 2px 2px 0;transform:translateY(-1px) rotate(45deg);animation:tk-tick 260ms cubic-bezier(.34,1.56,.64,1) both}
+      .tk-check:active{transform:scale(.88)}
+      @keyframes tk-tick{from{opacity:0;transform:translateY(-1px) rotate(45deg) scale(.3)}to{opacity:1;transform:translateY(-1px) rotate(45deg) scale(1)}}
+      .tk-done-text{background-image:linear-gradient(currentColor,currentColor);background-repeat:no-repeat;background-position:0 55%;background-size:0 1.5px;transition:background-size 300ms cubic-bezier(.2,.8,.2,1),color 220ms ease}
+      .tk-done-text.done{background-size:100% 1.5px}
+      @keyframes tk-cal-l{from{opacity:0;transform:translateX(-16px)}to{opacity:1;transform:none}}
+      @keyframes tk-cal-r{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
+      .tk-cal-anim-l{animation:tk-cal-l 280ms cubic-bezier(.2,.8,.2,1) both}
+      .tk-cal-anim-r{animation:tk-cal-r 280ms cubic-bezier(.2,.8,.2,1) both}
+      .tk-col.tk-drop{background:${T.accent}0d!important;transform:scale(1.01)}
+      .tk-col{transition:border-color 160ms ease,background 160ms ease,transform 200ms cubic-bezier(.2,.8,.2,1)}
       @media (max-width:640px){
         .tk-prop{grid-template-columns:118px minmax(0,1fr)}
         .tk-cal-day{min-height:52px}

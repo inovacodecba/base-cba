@@ -216,7 +216,7 @@ export function TaskPage({ T, task, tasks, projects, team, currentUser, myUid, i
   const sectionCount = (n, d) => <span style={{ fontSize: 11, fontWeight: 700, color: T.textFaint }}>{d != null ? `${d}/${n}` : n}</span>;
 
   return (
-    <div className="tk-view" style={{ maxWidth: 820, width: "100%", margin: "0 auto", paddingBottom: 40 }}>
+    <div className="tk-page" style={{ maxWidth: 820, width: "100%", margin: "0 auto", paddingBottom: 40 }}>
       {/* barra do topo: voltar + caminho (breadcrumb) */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 18 }}>
         <button onClick={onBack} className="tk-pill-btn" style={{ ...ghost(), borderRadius: 999, display: "flex", alignItems: "center", gap: 6, padding: "7px 12px" }}>
@@ -325,9 +325,9 @@ export function TaskPage({ T, task, tasks, projects, team, currentUser, myUid, i
       <Section T={T} icon={ListChecks} title="Checklist" right={checklist.length > 0 && sectionCount(checklist.length, checklist.filter(i => i.feito).length)}>
         {checklist.length > 0 && <div style={{ display: "flex", marginBottom: 8 }}><ProgressBar T={T} done={checklist.filter(i => i.feito).length} total={checklist.length} color={statusColor(T, "concluido")} /></div>}
         {checklist.map(i => (
-          <div key={i.id} className="tk-row" style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 6px", borderRadius: 6 }}>
-            <input type="checkbox" checked={!!i.feito} onChange={() => toggleCheck(i.id)} style={{ accentColor: T.accent, width: 17, height: 17, flexShrink: 0, cursor: "pointer" }} aria-label={i.texto} />
-            <span style={{ flex: 1, fontSize: 13, color: i.feito ? T.textFaint : T.text, textDecoration: i.feito ? "line-through" : "none", wordBreak: "break-word" }}>{i.texto}</span>
+          <div key={i.id} className="tk-row tk-item-in" style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 6px", borderRadius: 6 }}>
+            <input type="checkbox" className="tk-check" checked={!!i.feito} onChange={() => toggleCheck(i.id)} aria-label={i.texto} />
+            <span style={{ flex: 1, fontSize: 13, wordBreak: "break-word" }}><span className={`tk-done-text${i.feito ? " done" : ""}`} style={{ color: i.feito ? T.textFaint : T.text }}>{i.texto}</span></span>
             <button onClick={() => removeCheck(i.id)} aria-label="Remover item" style={{ background: "none", border: "none", color: T.textFaint, cursor: "pointer", padding: 4, display: "flex" }}><X size={14} /></button>
           </div>
         ))}
@@ -344,9 +344,9 @@ export function TaskPage({ T, task, tasks, projects, team, currentUser, myUid, i
           const d = dueInfo(s.prazo, T, s.status);
           const done = s.status === "concluido";
           return (
-            <div key={s.id} className="tk-row" style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 6px", borderRadius: 6 }}>
-              <input type="checkbox" checked={done} onChange={() => api.updateStatus(s.id, done ? "a_fazer" : "concluido")} style={{ accentColor: T.accent, width: 17, height: 17, flexShrink: 0, cursor: "pointer" }} aria-label={`Concluir ${s.titulo}`} />
-              <button onClick={() => onOpenTask(s.id)} style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", fontSize: 13, color: done ? T.textFaint : T.text, textDecoration: done ? "line-through" : "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.titulo}</button>
+            <div key={s.id} className="tk-row tk-item-in" style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 6px", borderRadius: 6 }}>
+              <input type="checkbox" className="tk-check" checked={done} onChange={() => api.updateStatus(s.id, done ? "a_fazer" : "concluido")} aria-label={`Concluir ${s.titulo}`} />
+              <button onClick={() => onOpenTask(s.id)} style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", fontSize: 13, color: done ? T.textFaint : T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", transition: "color 220ms ease" }}><span className={`tk-done-text${done ? " done" : ""}`}>{s.titulo}</span></button>
               <AvatarStack T={T} names={s.responsaveis || []} size={17} />
               {s.prazo && !done && <span style={{ fontSize: 10.5, fontWeight: 700, color: d.color, whiteSpace: "nowrap" }}>{d.days != null && d.days > 2 ? fmtDate(s.prazo) : d.label}</span>}
               <span title={TASK_STATUS[s.status]?.label} style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor(T, s.status), flexShrink: 0 }} />
@@ -396,7 +396,7 @@ export function TaskPage({ T, task, tasks, projects, team, currentUser, myUid, i
         {comments === null && <div style={{ fontSize: 12, color: T.textFaint, padding: 6 }}>Carregando…</div>}
         {comments && comments.length === 0 && <div style={{ fontSize: 12, color: T.textFaint, padding: "4px 6px" }}>Nenhum comentário ainda.</div>}
         {comments && comments.map(c => (
-          <div key={c.id} style={{ display: "flex", gap: 10, padding: "8px 6px" }}>
+          <div key={c.id} className="tk-item-in" style={{ display: "flex", gap: 10, padding: "8px 6px" }}>
             <span style={{ width: 28, height: 28, borderRadius: "50%", background: `${T.accent}22`, color: T.accent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, flexShrink: 0 }}>{(c.autor || "?").trim().slice(0, 1).toUpperCase()}</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
@@ -428,7 +428,7 @@ export function TaskPage({ T, task, tasks, projects, team, currentUser, myUid, i
           {showHistory ? "Esconder" : `Mostrar${history ? ` (${history.length})` : ""}`} <ChevronDown size={13} style={{ transform: showHistory ? "rotate(180deg)" : "none", transition: "transform 120ms ease" }} />
         </button>}
       >
-        {showHistory && (
+        <div className={`tk-collapse${showHistory ? " open" : ""}`}><div>
           <div style={{ display: "flex", flexDirection: "column" }}>
             {history === null && <div style={{ fontSize: 12, color: T.textFaint, padding: 6 }}>Carregando…</div>}
             {history && history.length === 0 && <div style={{ fontSize: 12, color: T.textFaint, padding: 6 }}>Sem registros ainda (o histórico começou em 14/10/2026).</div>}
@@ -439,7 +439,7 @@ export function TaskPage({ T, task, tasks, projects, team, currentUser, myUid, i
               </div>
             ))}
           </div>
-        )}
+        </div></div>
       </Section>
     </div>
   );

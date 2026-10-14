@@ -3,6 +3,7 @@
 // Mobile (<960px): header compacto + barra de abas fixa embaixo
 // (classes .mobile-topbar / .mobile-bottom-nav) — a visibilidade de cada
 // bloco é controlada só por CSS (@media), sem depender de JS medir a tela.
+import { useState } from "react";
 import {
   LayoutDashboard, Boxes, ArrowLeftRight, Layers, FileText, Bell,
   MapPin, Map, Tags, Truck, Settings, Moon, Sun, LogOut, Search, MoreHorizontal, X, Plus,
@@ -270,28 +271,39 @@ export function MobileTopBar({ T, currentUser, alertCount, onAlertClick, onMenu 
 const PRIMARY_MOBILE = NAV_ITEMS.filter(i => i.primary);
 
 export function MobileBottomNav({ T, view, invTab, onNavigate, onMore }) {
+  // Itens com `tab` apontam pra uma aba interna de uma mega-view (ex.:
+  // "Inventário" e "Movimentações" vivem na mesma view "inventario") — o
+  // destaque certo depende da aba ativa, não só da view.
+  const isActive = (item) => (item.tab ? (view === (item.jump || item.key) && invTab === item.tab) : (view === item.key));
+  const activeIdx = PRIMARY_MOBILE.findIndex(isActive);
+  const slots = PRIMARY_MOBILE.length + 1; // + botão "Mais"
   return (
     <nav className="mobile-bottom-nav" style={{
       display: "none", position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 90,
       background: T.panel, borderTop: `1px solid ${T.border}`,
       paddingBottom: "env(safe-area-inset-bottom, 0px)",
     }}>
-      <div style={{ display: "flex" }}>
+      <div style={{ display: "flex", position: "relative" }}>
+        {/* Pílula que desliza até o ícone ativo (10/2026 — mais fluido). */}
+        {activeIdx >= 0 && (
+          <span aria-hidden="true" style={{
+            position: "absolute", top: 5, left: 0, width: `${100 / slots}%`, height: 30, display: "flex", justifyContent: "center",
+            transform: `translateX(${activeIdx * 100}%)`, transition: "transform 380ms cubic-bezier(.34,1.3,.64,1)", pointerEvents: "none",
+          }}>
+            <span style={{ width: 48, height: "100%", borderRadius: 999, background: `${T.accent}1f` }} />
+          </span>
+        )}
         {PRIMARY_MOBILE.map(item => {
           const Icon = ICONS[item.icon];
-          // Itens com `tab` apontam pra uma aba interna de uma mega-view
-          // (ex.: "Inventário" e "Movimentações" hoje vivem na mesma view
-          // "inventario") — o destaque do ícone certo depende da aba ativa,
-          // não só da view, senão os dois ícones ficariam acesos juntos.
-          const active = item.tab ? (view === (item.jump || item.key) && invTab === item.tab) : (view === item.key);
+          const active = isActive(item);
           return (
             <button key={item.key} onClick={() => onNavigate(item)} style={{
-              flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
-              padding: "8px 4px 7px", border: "none", background: "transparent",
+              flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, position: "relative",
+              padding: "10px 4px 7px", border: "none", background: "transparent",
               color: active ? T.accent : T.textFaint, fontFamily: "inherit",
             }}>
-              {Icon && <Icon size={19} strokeWidth={active ? 2.4 : 2} />}
-              <span style={{ fontSize: 9.5, fontWeight: active ? 700 : 500 }}>{item.label}</span>
+              {Icon && <Icon key={active ? "on" : "off"} size={19} strokeWidth={active ? 2.4 : 2} style={{ animation: active ? "nav-pop 420ms cubic-bezier(.34,1.56,.64,1)" : "none" }} />}
+              <span style={{ fontSize: 9.5, fontWeight: active ? 700 : 500, transition: "color 200ms ease" }}>{item.label}</span>
             </button>
           );
         })}
@@ -304,11 +316,14 @@ export function MobileBottomNav({ T, view, invTab, onNavigate, onMore }) {
   );
 }
 
-export function MoreSheet({ T, theme, setTheme, currentUser, isAdmin, onClose, onNavigate, onNewItem, onOpenTeam, onLogout, taskBadge = 0 }) {
+export function MoreSheet({ T, theme, setTheme, currentUser, isAdmin, onClose: closeNow, onNavigate, onNewItem, onOpenTeam, onLogout, taskBadge = 0 }) {
+  // Gaveta sobe de baixo e desce ao fechar (animação de saída antes de sumir).
+  const [closing, setClosing] = useState(false);
+  const onClose = () => { if (closing) return; setClosing(true); setTimeout(closeNow, 220); };
   const extra = NAV_ITEMS.filter(i => !i.primary);
   return (
-    <div style={{ position: "fixed", inset: 0, background: T.overlay, zIndex: 1000, display: "flex", alignItems: "flex-end" }} onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} style={{ background: T.panel, borderRadius: "14px 14px 0 0", width: "100%", maxHeight: "80vh", overflowY: "auto", padding: "10px 12px calc(16px + env(safe-area-inset-bottom, 0px))" }}>
+    <div style={{ position: "fixed", inset: 0, background: T.overlay, zIndex: 1000, display: "flex", alignItems: "flex-end", animation: closing ? "fade-out 220ms ease both" : "fade-in 200ms ease both" }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ animation: closing ? "sheet-down 220ms ease-in both" : "sheet-up 340ms cubic-bezier(.2,.8,.2,1) both", background: T.panel, borderRadius: "18px 18px 0 0", width: "100%", maxHeight: "80vh", overflowY: "auto", padding: "10px 12px calc(16px + env(safe-area-inset-bottom, 0px))" }}>
         <div style={{ width: 36, height: 4, borderRadius: 2, background: T.border, margin: "4px auto 12px" }} />
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 6px 10px" }}>
           <span style={{ fontSize: 13, fontWeight: 700, color: T.textBright }}>Mais opções</span>

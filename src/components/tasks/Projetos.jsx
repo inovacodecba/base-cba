@@ -132,7 +132,7 @@ export function ProjetoPage({ T, project, tasks, onBack, onOpenTask, onUpdate, o
   };
 
   return (
-    <div className="tk-view" style={{ maxWidth: 820, width: "100%", margin: "0 auto", paddingBottom: 40 }}>
+    <div className="tk-page" style={{ maxWidth: 820, width: "100%", margin: "0 auto", paddingBottom: 40 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 18 }}>
         <button onClick={onBack} className="tk-pill-btn" style={{ ...ghost(), borderRadius: 999, display: "flex", alignItems: "center", gap: 6, padding: "7px 12px" }}><ArrowLeft size={14} /> Projetos</button>
         <span style={{ flex: 1 }} />

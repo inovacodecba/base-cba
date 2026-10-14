@@ -379,7 +379,13 @@ export default function App() {
   // usá-lo antes desta linha quebra com "Cannot access 'showToast' before
   // initialization" em TODO render (bug real de ordem no código, não do
   // bundler/minificador — encontrado e corrigido em 31/08/2026).
-  const showToast = useCallback((msg, type = "ok") => { setToast({ msg, type }); setTimeout(() => setToast(null), 2800); }, []);
+  // Cada aviso tem um id: o timer de um aviso antigo não fecha o novo antes
+  // da hora, e o `key` reinicia a animação de entrada a cada aviso.
+  const showToast = useCallback((msg, type = "ok") => {
+    const id = Date.now() + Math.random();
+    setToast({ msg, type, id });
+    setTimeout(() => setToast(t => (t && t.id === id ? null : t)), 2800);
+  }, []);
 
   // ── logout automático por inatividade ───────────────────────────────────
   // Mitiga o risco de manter o token de sessão em localStorage (cookie
@@ -1557,6 +1563,34 @@ export default function App() {
            específicas já definidas inline em componentes pontuais. */
         button,a,.stat-tile,.mov-card{transition:background 180ms ease,border-color 180ms ease,color 180ms ease,transform 180ms ease,box-shadow 180ms ease}
         button:disabled{cursor:default}
+
+        /* ── movimento (10/2026, "deixar mais fluido") ───────────────────
+           Uma curva só pro app inteiro (sai rápido, freia suave) e um
+           "aperto" leve ao tocar em botões — no celular é o que dá a
+           sensação de app nativo. Botões com transform inline (ex.: ícone
+           centralizado com translate) não são afetados: inline vence. */
+        :root{--ease-out:cubic-bezier(.2,.8,.2,1);--ease-spring:cubic-bezier(.34,1.56,.64,1)}
+        html{-webkit-tap-highlight-color:transparent}
+        button:active:not(:disabled){transform:scale(.97)}
+        @keyframes view-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+        .view-enter{animation:view-in 320ms var(--ease-out) both}
+        @keyframes stagger-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+        .view-enter > *{animation:stagger-in 380ms var(--ease-out) both}
+        .view-enter > *:nth-child(2){animation-delay:40ms}
+        .view-enter > *:nth-child(3){animation-delay:80ms}
+        .view-enter > *:nth-child(4){animation-delay:120ms}
+        .view-enter > *:nth-child(n+5){animation-delay:160ms}
+        @keyframes toast-in{0%{opacity:0;transform:translateY(-14px) scale(.94)}100%{opacity:1;transform:none}}
+        @keyframes sheet-up{from{transform:translateY(100%)}to{transform:none}}
+        @keyframes sheet-down{from{transform:none}to{transform:translateY(100%)}}
+        @keyframes fade-in{from{opacity:0}to{opacity:1}}
+        @keyframes fade-out{from{opacity:1}to{opacity:0}}
+        @keyframes nav-pop{0%{transform:scale(1)}40%{transform:scale(1.22) translateY(-2px)}100%{transform:scale(1)}}
+        /* Quem prefere menos movimento (configuração do celular) vê tudo
+           sem animação — acessibilidade. */
+        @media (prefers-reduced-motion: reduce){
+          *,*::before,*::after{animation-duration:1ms!important;animation-delay:0ms!important;transition-duration:1ms!important}
+        }
         /* Anel de foco visível só para navegação por teclado (não aparece em
            clique de mouse) — contraste alto o suficiente sobre fundo claro
            ou escuro, sem depender da paleta de cores do tema. */
@@ -1633,8 +1667,7 @@ export default function App() {
         };
         const { bg, Icon } = TOAST_STYLE[toast.type] || TOAST_STYLE.info;
         return (
-          <div role="status" aria-live="polite" style={{ position: "fixed", top: 60, right: 16, zIndex: 9999, display: "flex", alignItems: "center", gap: 8, background: bg, color: "#fff", padding: "9px 10px 9px 14px", borderRadius: 7, fontSize: 12, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,.4)", maxWidth: 320, animation: "toast-in 200ms ease" }}>
-            <style>{`@keyframes toast-in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}`}</style>
+          <div key={toast.id ?? toast.msg} role="status" aria-live="polite" style={{ position: "fixed", top: 60, right: 16, zIndex: 9999, display: "flex", alignItems: "center", gap: 8, background: bg, color: "#fff", padding: "9px 10px 9px 14px", borderRadius: 10, fontSize: 12, fontWeight: 600, boxShadow: "0 10px 30px rgba(0,0,0,.35)", maxWidth: "min(320px, calc(100vw - 32px))", animation: "toast-in 380ms var(--ease-spring) both" }}>
             <Icon size={15} strokeWidth={2.25} style={{ flexShrink: 0 }} />
             <span style={{ flex: 1 }}>{toast.msg}</span>
             <button onClick={() => setToast(null)} aria-label="Fechar aviso" style={{ background: "rgba(255,255,255,.18)", border: "none", color: "#fff", width: 20, height: 20, borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, transition: "background 150ms ease" }} onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,.3)"} onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,.18)"}>
@@ -1682,6 +1715,9 @@ export default function App() {
 
         <div className="content-inner" style={{ maxWidth: 1300, margin: "0 auto", padding: "20px 20px 40px" }}>
           <ErrorBoundary T={T} key={view}>
+          {/* Troca de tela com entrada suave (fade + subida curta), cada bloco
+              da tela entra um pouquinho depois do anterior — ver .view-enter. */}
+          <div className="view-enter">
 
           {/* DASHBOARD */}
           {view === "dashboard" && (
@@ -2127,6 +2163,7 @@ export default function App() {
           </div>
           </>}
         </>}
+          </div>
           </ErrorBoundary>
           </div>
 
