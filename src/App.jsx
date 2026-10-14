@@ -195,6 +195,7 @@ export default function App() {
   const [colaboradorDocs, setColaboradorDocs] = useState([]);
   const [docsJump, setDocsJump] = useState(null); // sinal pra abrir "Documentos" já na sub-aba "Treinamentos" (ex.: clique num alerta de treinamento vencendo)
   const [tasks, setTasks] = useState([]); // aba "Tarefas" (quadro Kanban simplificado)
+  const [projects, setProjects] = useState([]); // Tarefas > Projetos
   const [equipamentos, setEquipamentos] = useState([]);
   const [activeLogins, setActiveLogins] = useState(new Set());
   const [hasPassword, setHasPassword] = useState(null); // null = não verificado, true/false = já verificado via RPC
@@ -287,7 +288,7 @@ export default function App() {
 
   const loadAll = async () => {
     try {
-      const [dbItems, dbMovs, dbTeam, dbSectors, dbEquip, dbCategories, dbDocFolders, dbDocuments, dbColabDocs, dbTasks] = await Promise.all([
+      const [dbItems, dbMovs, dbTeam, dbSectors, dbEquip, dbCategories, dbDocFolders, dbDocuments, dbColabDocs, dbTasks, dbProjects] = await Promise.all([
         sb("items?order=id.asc"),
         sb("movimentacoes?order=id.desc"),
         sb("team?order=name.asc"),
@@ -298,6 +299,7 @@ export default function App() {
         sb("documents?order=created_at.desc").catch(() => null), // idem
         sb("colaborador_docs?order=colaborador.asc,data_vencimento.asc").catch(() => null), // idem (Documentos > Treinamentos)
         sb("tarefas?order=id.desc").catch(() => null), // idem (aba Tarefas)
+        sb("projetos?order=nome.asc").catch(() => null), // idem (Tarefas > Projetos)
       ]);
       // Nota: categoria NÃO é normalizada para "Diversos" aqui — o valor bruto
       // (incluindo null/vazio) é preservado para permitir o filtro "Sem categoria".
@@ -324,6 +326,7 @@ export default function App() {
       setDocuments(dbDocuments || []);
       setColaboradorDocs(dbColabDocs || []);
       setTasks(dbTasks || []);
+      setProjects(dbProjects || []);
       setLoaded(true);
     } catch (e) {
       setDbError(e.message);
@@ -1232,24 +1235,33 @@ export default function App() {
   // pessoa logada pode criar e atribuir tarefa pra qualquer colega — sem
   // checagem extra de "dono" na interface nem no banco (RLS já documentado
   // na migração `create_tarefas_table`).
-  const createTask = async (payload) => {
+  // `silent`: a página da tarefa (estilo Notion) salva sozinha a cada
+  // mudança — sem toast a cada clique. Retornam o resultado pra quem chamou
+  // poder abrir a tarefa criada / recarregar o histórico.
+  const createTask = async (payload, { silent } = {}) => {
     const row = { ...payload, criado_por: currentUser, status: "a_fazer", criado_em_str: ts(), criado_em_iso: new Date().toISOString(), updated_at: new Date().toISOString() };
     try {
       const [saved] = await sb("tarefas", "POST", row) || [];
       setTasks(p => [saved || { ...row, id: `tmp-${Date.now()}` }, ...p]);
-      showToast("Tarefa criada");
+      if (!silent) showToast("Tarefa criada");
+      return saved || null;
     } catch (e) {
       showToast(`Erro ao criar tarefa: ${e.message}`, "err");
+      return null;
     }
   };
-  const updateTask = async (id, patch) => {
+  const updateTask = async (id, patch, { silent } = {}) => {
     const body = { ...patch, updated_at: new Date().toISOString() };
+    const before = tasks.find(t => t.id === id);
+    setTasks(p => p.map(t => t.id === id ? { ...t, ...body } : t)); // otimista
     try {
       await sb(`tarefas?id=eq.${id}`, "PATCH", body);
-      setTasks(p => p.map(t => t.id === id ? { ...t, ...body } : t));
-      showToast("Tarefa atualizada");
+      if (!silent) showToast("Tarefa atualizada");
+      return true;
     } catch (e) {
+      if (before) setTasks(p => p.map(t => t.id === id ? before : t));
       showToast(`Erro ao atualizar tarefa: ${e.message}`, "err");
+      return false;
     }
   };
   // Atalho usado pelo arrastar-e-soltar e pelas setinhas ‹ › do card — só
@@ -1265,17 +1277,85 @@ export default function App() {
       showToast(`Erro ao mover tarefa: ${e.message}`, "err");
     }
   };
-  const deleteTask = (task) => {
-    askConfirm(`Excluir a tarefa "${task.titulo}"?`, async () => {
+  // Excluir apaga junto as subtarefas (on delete cascade no banco), os
+  // comentários/histórico delas e os arquivos anexados no Storage.
+  const deleteTask = (task, onDone) => {
+    const ids = new Set([task.id]);
+    let grew = true;
+    while (grew) { grew = false; tasks.forEach(t => { if (t.parent_id != null && ids.has(t.parent_id) && !ids.has(t.id)) { ids.add(t.id); grew = true; } }); }
+    const nSubs = ids.size - 1;
+    askConfirm(`Excluir a tarefa "${task.titulo}"${nSubs ? ` e ${nSubs} subtarefa(s)` : ""}?`, async () => {
+      const files = tasks.filter(t => ids.has(t.id)).flatMap(t => (Array.isArray(t.anexos) ? t.anexos : []).map(a => a.path));
       try {
         await sb(`tarefas?id=eq.${task.id}`, "DELETE");
-        setTasks(p => p.filter(t => t.id !== task.id));
+        setTasks(p => p.filter(t => !ids.has(t.id)));
         showToast(`"${task.titulo}" excluída`, "warn");
+        if (files.length) sbStorageDelete(files).catch(() => {}); // arquivo órfão não quebra nada
+        onDone?.();
       } catch (e) {
         showToast(`Erro ao excluir tarefa: ${e.message}`, "err");
       }
     });
   };
+
+  // ── projetos (Tarefas > Projetos) ──
+  const createProject = async (payload) => {
+    try {
+      const [saved] = await sb("projetos", "POST", { ...payload, criado_por: currentUser }) || [];
+      if (saved) setProjects(p => [...p, saved].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")));
+      showToast("Projeto criado");
+      return saved || null;
+    } catch (e) {
+      showToast(`Erro ao criar projeto: ${e.message}`, "err");
+      return null;
+    }
+  };
+  const updateProject = async (id, patch) => {
+    const before = projects.find(p => p.id === id);
+    setProjects(p => p.map(x => x.id === id ? { ...x, ...patch } : x));
+    try {
+      await sb(`projetos?id=eq.${id}`, "PATCH", patch);
+    } catch (e) {
+      if (before) setProjects(p => p.map(x => x.id === id ? before : x));
+      showToast(`Erro ao salvar projeto: ${e.message}`, "err");
+    }
+  };
+  const deleteProject = (project, onDone) => {
+    askConfirm(`Excluir o projeto "${project.nome}"? As tarefas continuam, só ficam sem projeto.`, async () => {
+      try {
+        await sb(`projetos?id=eq.${project.id}`, "DELETE");
+        setProjects(p => p.filter(x => x.id !== project.id));
+        setTasks(p => p.map(t => t.projeto_id === project.id ? { ...t, projeto_id: null } : t));
+        showToast(`Projeto "${project.nome}" excluído`, "warn");
+        onDone?.();
+      } catch (e) {
+        showToast(`Erro ao excluir projeto: ${e.message}`, "err");
+      }
+    });
+  };
+
+  // Funções que a tela Tarefas usa (página da tarefa: comentários,
+  // histórico e anexos são carregados sob demanda, só quando abre).
+  const taskApi = {
+    createTask, updateTask, updateStatus: updateTaskStatus, deleteTask,
+    createProject, updateProject, deleteProject,
+    loadComments: (id) => sb(`tarefa_comentarios?tarefa_id=eq.${id}&order=criado_em.asc`),
+    addComment: async (id, texto) => (await sb("tarefa_comentarios", "POST", { tarefa_id: id, texto }))[0],
+    deleteComment: (cid) => sb(`tarefa_comentarios?id=eq.${cid}`, "DELETE"),
+    loadHistory: (id) => sb(`tarefa_historico?tarefa_id=eq.${id}&order=criado_em.asc`),
+    uploadAnexo: async (taskId, file) => {
+      const path = uniqueStoragePath(`tarefas/${taskId}`, file.name);
+      await sbStorageUpload(path, file);
+      return { path, nome: file.name, tipo: file.type || "", tamanho: file.size, por: currentUser, em: new Date().toISOString() };
+    },
+    removeAnexoFile: (path) => sbStorageDelete([path]),
+    anexoUrl: (path) => docPublicUrl(path),
+  };
+  // id do usuário no Supabase Auth (campo `sub` do token) — só pra mostrar
+  // o botão de apagar no próprio comentário; quem decide de verdade é o RLS.
+  const myUid = (() => {
+    try { return JSON.parse(atob(authSession.access_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).sub; } catch { return null; }
+  })();
   // Badge vermelho na sidebar/menu (só minhas tarefas em aberto — status
   // diferente de "concluído") — o alerta visual pedido pelo usuário, sem
   // misturar com o sino de alertas de estoque (assunto diferente). Uma
@@ -1680,12 +1760,12 @@ export default function App() {
             <Tarefas
               T={T}
               tasks={tasks}
+              projects={projects}
               team={team}
               currentUser={currentUser}
-              onCreate={createTask}
-              onUpdate={updateTask}
-              onUpdateStatus={updateTaskStatus}
-              onDelete={deleteTask}
+              myUid={myUid}
+              isAdmin={isAdminUser}
+              api={taskApi}
               showToast={showToast}
             />
           )}

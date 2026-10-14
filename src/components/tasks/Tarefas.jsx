@@ -1,202 +1,52 @@
-// "Tarefas" — quadro Kanban simplificado (tipo Trello interno), pedido do
-// usuário: criar tarefa, atribuir responsável(is), ver o andamento em 3
-// colunas fixas (A Fazer / Em Andamento / Concluído), e uma segunda visão
-// agrupada por pessoa (pra ver rápido "quem tem o quê"). Puramente
-// apresentacional — mesmo padrão container/presentational do resto do app
-// (Dashboard.jsx, Documentos.jsx): todo o CRUD de verdade (chamadas ao
-// Supabase) mora no App.jsx, aqui só se recebe os dados prontos e se
-// dispara callbacks.
+// "Tarefas" — quadro Kanban interno (tipo Trello) que virou um mini-Notion
+// (10/2026). Puramente apresentacional, mesmo padrão container/presentational
+// do resto do app: todo o CRUD de verdade (chamadas ao Supabase) mora no
+// App.jsx e chega aqui pelo objeto `api`.
 //
-// Arrastar-e-soltar: implementado com a API nativa do HTML5 (draggable +
-// onDragStart/onDragOver/onDrop), sem nenhuma lib nova — mantém o bundle
-// pequeno (site é hospedado no GitHub Pages) e cobre bem o uso no desktop
-// (mouse). Só que essa API do navegador NÃO dispara em toque de celular, e
-// o app é um PWA pensado pra Android/iPhone — por isso cada card também tem
-// 2 setinhas (‹ ›) que movem a tarefa pra coluna anterior/seguinte com 1
-// toque, funcionando igual em qualquer aparelho. Arrastar é um bônus no
-// desktop; as setas são o caminho garantido em todo lugar.
+// Visões: Quadro (Kanban), Tabela, Calendário, Por Pessoa e Projetos — todas
+// usam a mesma barra de busca + filtros. Clicar numa tarefa abre a página
+// dela (TaskPage.jsx) com propriedades, checklist, subtarefas, anexos,
+// comentários e histórico, igual à página de um item no Notion.
 //
-// Múltiplos responsáveis (31/08/2026): uma tarefa pode ter vários
-// responsáveis (array `responsaveis`) — cada um conta pro próprio badge de
-// "tarefas em aberto" (todos são avisados, não só um "principal"). A visão
-// "Por Pessoa" existe justamente porque, com vários responsáveis por
-// tarefa, fica mais difícil enxergar a carga de cada colaborador só
-// olhando o quadro por status — aqui cada pessoa vira um cartão com a
-// contagem de pendências e a lista das tarefas dela.
+// Arrastar-e-soltar: API nativa do HTML5 (sem lib). Ela NÃO dispara no toque
+// do celular, por isso cada card também tem as setinhas ‹ › — o caminho
+// garantido em qualquer aparelho.
 //
-// Reskin "cartão de produto" (10/2026): pedido do usuário foi deixar a
-// estética parecida com um painel tipo SaaS (cards com badge, tag de
-// urgência, mini-infobox de responsável/prazo, botões em pílula) + mais
-// animação pra melhorar a sensação de uso — mantendo 100% do comportamento
-// que já existia (drag-and-drop, setas, modal, visão por pessoa). Só a
-// camada visual mudou; toda a lógica de dados é a mesma de antes.
-import { useState, useMemo } from "react";
-import { Plus, ChevronLeft, ChevronRight, ChevronDown, CalendarDays, ClipboardCheck, Kanban, Users, ArrowRight, CheckCircle2, Flag, Tag } from "lucide-react";
+// Múltiplos responsáveis (31/08/2026): cada responsável conta pro próprio
+// badge de "tarefas em aberto". A visão "Por Pessoa" mostra a carga de cada um.
+//
+// Subtarefas: no Quadro e na Tabela aparecem só as tarefas "de cima" (com o
+// progresso das filhas no card), pra não encher o quadro — o filtro
+// "Mostrar subtarefas" (ou uma busca) traz as filhas também.
+import { useState, useMemo, useEffect } from "react";
+import {
+  Plus, ChevronLeft, ChevronRight, CalendarDays, ClipboardCheck, Kanban, Users, ArrowRight, CheckCircle2, Tag, Table2,
+  CalendarRange, FolderKanban, Search, SlidersHorizontal, X, ListTree, Paperclip, CornerDownRight,
+} from "lucide-react";
 import { Overlay } from "../common.jsx";
 import { makeStyleHelpers } from "../../theme.js";
 import { TASK_STATUS, TASK_PRIORITY } from "../../constants.js";
+import {
+  COLS, PRIORITIES, TaskStyles, PriorityBadge, CategoryTag, ProjectTag, AvatarStack, TeamMultiSelect, dueInfo, fmtDate,
+  priorityOrder, taskProgress, statusColor, EmptyState,
+} from "./taskUi.jsx";
+import { TaskPage } from "./TaskPage.jsx";
+import { TabelaView, CalendarioView } from "./TaskViews.jsx";
+import { ProjetosView, ProjetoPage, ProjectModal } from "./Projetos.jsx";
 
-const COLS = Object.keys(TASK_STATUS); // ["a_fazer", "em_andamento", "concluido"]
-const PRIORITIES = Object.keys(TASK_PRIORITY); // ["baixa", "media", "alta", "urgente"]
+const TABS = [
+  { key: "quadro", label: "Quadro", icon: Kanban },
+  { key: "tabela", label: "Tabela", icon: Table2 },
+  { key: "calendario", label: "Calendário", icon: CalendarRange },
+  { key: "pessoa", label: "Por Pessoa", icon: Users },
+  { key: "projetos", label: "Projetos", icon: FolderKanban },
+];
+const TAB_KEY = "tk-tab";
+const readTab = () => { try { const v = localStorage.getItem(TAB_KEY); return TABS.some(t => t.key === v) ? v : "quadro"; } catch { return "quadro"; } };
 
-// Cor da tag de categoria (10/2026) — "Projeto"/"Infra"/"Compras"/etc são
-// texto livre (sem tabela própria, ver migração `add_tarefas_categoria_
-// prioridade`), então a cor não pode vir de um mapa fixo como CAT_COLOR do
-// inventário. Em vez disso, deriva um índice estável a partir do próprio
-// nome (hash simples) — a mesma categoria sempre cai na mesma cor da
-// paleta, em qualquer sessão, sem precisar persistir "categoria → cor" em
-// lugar nenhum.
-const CAT_TAG_PALETTE = ["#3b82f6", "#f97316", "#8b5cf6", "#06b6d4", "#22c55e", "#ec4899", "#14b8a6", "#f43f5e", "#84cc16", "#eab308"];
-function categoryColor(name) {
-  if (!name) return null;
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
-  return CAT_TAG_PALETTE[hash % CAT_TAG_PALETTE.length];
-}
+const EMPTY_FILTERS = { resp: "todos", status: "todos", prio: "todas", projeto: "todos", cat: "todas", prazo: "todos", subs: false };
 
-// "2026-08-31" → "31/08" — as tarefas guardam só a data (sem hora), então
-// não reaproveita `fd()`/`ts()` de utils.js (esses esperam o formato
-// "dd/mm/aaaa, hh:mm:ss" que o app usa pra movimentações, com hora junto).
-const fmtDate = (iso) => {
-  if (!iso) return "";
-  const [y, m, d] = iso.split("-");
-  return `${d}/${m}`;
-};
-
-// Classifica o prazo em atrasado / hoje / próximo / normal — vira tanto a
-// cor do chip "due" quanto a tag de urgência no topo do card (reaproveita o
-// mesmo dado real do banco, sem inventar um campo de "prioridade" que não
-// existe no schema). Uma tarefa já concluída nunca é "atrasada" — depois de
-// pronta, a urgência do prazo deixa de fazer sentido (evita o estranhamento
-// de ver "Atrasada" em vermelho num card que já foi resolvido).
-function dueInfo(prazo, T, status) {
-  if (status === "concluido") { const c = T.isLight ? "#1b9e4b" : "#22c55e"; return { label: "Concluída", color: c, full: "Concluída" }; }
-  if (!prazo) return { label: "Sem prazo", color: T.textFaint, full: null };
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const d = new Date(`${prazo}T00:00:00`);
-  const days = Math.round((d - today) / 86400000);
-  if (days < 0) return { label: "Atrasada", full: `Atrasada · ${fmtDate(prazo)}`, color: "#ef4444" };
-  if (days === 0) return { label: "Hoje", full: "Hoje", color: "#f97316" };
-  if (days <= 2) return { label: `Em ${days}d`, full: `${fmtDate(prazo)} · em ${days}d`, color: "#eab308" };
-  return { label: fmtDate(prazo), full: fmtDate(prazo), color: T.textFaint };
-}
-
-// Pílula de prioridade — sempre visível no card (mesmo "Baixa"/"Média"),
-// diferente do selo de prazo que só aparece quando há algo a sinalizar.
-// Prioridade é uma escolha explícita da pessoa ao criar a tarefa, então
-// escondê-la quando "normal" esconderia informação que ela decidiu
-// registrar; já o prazo é inferido automaticamente, por isso aquele segue
-// a regra de "só mostra o que precisa de atenção".
-function PriorityBadge({ T, prioridade, compact }) {
-  const cfg = TASK_PRIORITY[prioridade] || TASK_PRIORITY.media;
-  const c = T.isLight ? cfg.color.light : cfg.color.dark;
-  return (
-    <span title={`Prioridade: ${cfg.label}`} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 9.5, fontWeight: 700, color: c, background: `${c}18`, border: `1px solid ${c}30`, borderRadius: 20, padding: compact ? "2px 7px" : "3px 8px", whiteSpace: "nowrap", flexShrink: 0 }}>
-      <Flag size={10} strokeWidth={2.5} /> {cfg.label}
-    </span>
-  );
-}
-
-// Tag de categoria (texto livre — ver comentário de CAT_TAG_PALETTE acima).
-function CategoryTag({ T, categoria }) {
-  if (!categoria) return null;
-  const c = categoryColor(categoria);
-  return (
-    <span title={categoria} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 9.5, fontWeight: 700, color: c, background: `${c}18`, border: `1px solid ${c}30`, borderRadius: 20, padding: "3px 8px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 140, flexShrink: 1 }}>
-      <Tag size={10} strokeWidth={2.5} /> {categoria}
-    </span>
-  );
-}
-
-// Estilos/animações locais ao módulo Tarefas — ficam num único <style> no
-// topo do componente principal (ver `Tarefas`) em vez de espalhados pelo
-// <style> global do App.jsx, pra manter esse pedaço do design "preso" ao
-// componente que o usa (mesma ideia de separação de responsabilidades do
-// resto do projeto).
-function TaskStyles({ T }) {
-  return (
-    <style>{`
-      @keyframes tk-card-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-      @keyframes tk-view-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
-      .tk-view{animation:tk-view-in 200ms ease both}
-      .tk-card{animation:tk-card-in 320ms cubic-bezier(.2,.8,.2,1) both;transition:transform 160ms ease,box-shadow 160ms ease,border-color 160ms ease}
-      .tk-card:hover{transform:translateY(-2px);box-shadow:0 10px 22px rgba(0,0,0,.16)}
-      .tk-card.tk-dragging{opacity:.42}
-      .tk-chip-btn,.tk-pill-btn,.tk-nav-btn{transition:transform 140ms ease,background 140ms ease,color 140ms ease,border-color 140ms ease,box-shadow 140ms ease,opacity 140ms ease}
-      .tk-chip-btn:hover,.tk-pill-btn:hover:not(:disabled),.tk-nav-btn:hover:not(:disabled){transform:translateY(-1px)}
-      .tk-chip-btn:active,.tk-pill-btn:active:not(:disabled),.tk-nav-btn:active:not(:disabled){transform:translateY(0) scale(.96)}
-      .tk-tab-track{position:relative;display:flex;background:${T.panelAlt};border-radius:10px;padding:3px}
-      .tk-tab-indicator{position:absolute;top:3px;bottom:3px;left:3px;width:calc(50% - 3px);border-radius:7px;background:${T.panel};box-shadow:0 1px 4px rgba(0,0,0,.18);transition:transform 240ms cubic-bezier(.3,.8,.3,1)}
-      .tk-col{transition:border-color 160ms ease,background 160ms ease}
-      .task-person-row{transition:background 140ms ease,transform 140ms ease}
-      .task-person-row:hover{background:rgba(127,127,127,.10);transform:translateX(2px)}
-    `}</style>
-  );
-}
-
-// Pilha de avatares (iniciais) dos responsáveis — até 3 visíveis, o resto
-// vira "+N" pra não estourar a largura do card.
-function AvatarStack({ T, names, size = 18 }) {
-  if (!names || names.length === 0) return null;
-  const shown = names.slice(0, 3);
-  const extra = names.length - shown.length;
-  return (
-    <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
-      {shown.map((n, i) => (
-        <span key={n} title={n} style={{
-          width: size, height: size, borderRadius: "50%", background: `${T.accent}22`, color: T.accent,
-          display: "flex", alignItems: "center", justifyContent: "center", fontSize: size * 0.5, fontWeight: 700,
-          border: `1.5px solid ${T.panel}`, marginLeft: i === 0 ? 0 : -6, flexShrink: 0,
-        }}>{n.trim().slice(0, 1).toUpperCase()}</span>
-      ))}
-      {extra > 0 && <span style={{ fontSize: 9.5, fontWeight: 700, color: T.textFaint, marginLeft: 4 }}>+{extra}</span>}
-    </div>
-  );
-}
-
-// Dropdown simples com checkboxes pra escolher vários responsáveis — a
-// equipe é pequena (poucas pessoas), então uma lista com checkbox resolve
-// bem sem precisar de nenhuma lib de multi-select.
-function TeamMultiSelect({ T, team, value, onChange, inp }) {
-  const [open, setOpen] = useState(false);
-  const toggle = (name) => onChange(value.includes(name) ? value.filter(n => n !== name) : [...value, name]);
-  return (
-    <div style={{ position: "relative" }}>
-      <button
-        type="button"
-        onClick={() => setOpen(o => !o)}
-        style={{ ...inp(), textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}
-      >
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: value.length ? T.text : T.textFaint }}>
-          {value.length ? value.join(", ") : "Sem responsável"}
-        </span>
-        <ChevronDown size={14} style={{ flexShrink: 0, opacity: .6, transform: open ? "rotate(180deg)" : "none", transition: "transform 120ms ease" }} />
-      </button>
-      {open && (
-        <>
-          {/* backdrop invisível só pra fechar ao clicar fora, sem precisar de listener global */}
-          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 20 }} />
-          <div style={{
-            position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: T.panel, border: `1px solid ${T.border}`,
-            borderRadius: 8, padding: 4, zIndex: 21, maxHeight: 190, overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,.28)",
-          }}>
-            {team.length === 0 && <div style={{ padding: 8, fontSize: 11.5, color: T.textFaint }}>Nenhum colaborador cadastrado.</div>}
-            {team.map(name => (
-              <label key={name} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", borderRadius: 6, fontSize: 12.5, color: T.text, cursor: "pointer" }}>
-                <input type="checkbox" checked={value.includes(name)} onChange={() => toggle(name)} style={{ accentColor: T.accent, width: 14, height: 14, flexShrink: 0 }} />
-                {name}
-              </label>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-// Caixinha de info rotulada (label pequeno em cima, valor embaixo) — mesmo
-// recurso visual usado em painéis tipo SaaS pra mostrar 2 atributos lado a
-// lado (aqui: Responsável / Prazo) sem precisar de tabela.
+// Caixinha de info rotulada (label pequeno em cima, valor embaixo).
 function InfoBox({ T, label, children }) {
   return (
     <div style={{ background: T.panelAlt, borderRadius: 7, padding: "6px 8px", minWidth: 0 }}>
@@ -206,10 +56,12 @@ function InfoBox({ T, label, children }) {
   );
 }
 
-function TaskCard({ T, btn, ghost, task, isMine, onEdit, onMove, onDragStart, onDragEnd, isDragging, isFirst, isLast, delay }) {
+function TaskCard({ T, btn, ghost, task, allTasks, project, parentTitle, isMine, onOpen, onMove, onDragStart, onDragEnd, isDragging, isFirst, isLast, delay }) {
   const due = dueInfo(task.prazo, T, task.status);
   const responsaveis = task.responsaveis || [];
   const leadInitial = responsaveis[0] ? responsaveis[0].trim().slice(0, 1).toUpperCase() : null;
+  const prog = taskProgress(task, allTasks);
+  const nAnexos = Array.isArray(task.anexos) ? task.anexos.length : 0;
   return (
     <div
       className={`tk-card${isDragging ? " tk-dragging" : ""}`}
@@ -221,23 +73,33 @@ function TaskCard({ T, btn, ghost, task, isMine, onEdit, onMove, onDragStart, on
         borderRadius: 10, padding: "12px 12px 10px", marginBottom: 10, cursor: "grab", animationDelay: `${delay}ms`,
       }}
     >
+      {parentTitle && <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: T.textFaint, marginBottom: 5, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}><CornerDownRight size={10} /> {parentTitle}</div>}
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+        <button onClick={() => onOpen(task.id)} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
           <span style={{
             width: 24, height: 24, borderRadius: "50%", background: `${T.accent}1c`, border: `1px solid ${T.accent}33`,
             color: T.accent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10.5, fontWeight: 700, flexShrink: 0,
           }}>{leadInitial || <ClipboardCheck size={12} />}</span>
-          <div style={{ fontSize: 12.5, fontWeight: 700, color: T.text, wordBreak: "break-word" }}>{task.titulo}</div>
-        </div>
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: T.text, wordBreak: "break-word" }}>{task.titulo}</span>
+        </button>
         <span title={due.full} style={{ flexShrink: 0, fontSize: 9.5, fontWeight: 700, color: due.color, background: `${due.color}18`, border: `1px solid ${due.color}30`, borderRadius: 20, padding: "3px 8px", whiteSpace: "nowrap" }}>{due.label}</span>
       </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
         <PriorityBadge T={T} prioridade={task.prioridade} />
-        <CategoryTag T={T} categoria={task.categoria} />
+        <ProjectTag project={project} />
+        <CategoryTag categoria={task.categoria} />
       </div>
 
       {task.descricao && <div style={{ fontSize: 11, color: T.textMuted, marginTop: 8, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{task.descricao}</div>}
+
+      {(prog.total > 0 || nAnexos > 0) && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, fontSize: 10.5, fontWeight: 700, color: T.textMuted }}>
+          {prog.subs > 0 && <span title="Subtarefas concluídas" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: prog.subsDone === prog.subs ? statusColor(T, "concluido") : T.textMuted }}><ListTree size={12} /> {prog.subsDone}/{prog.subs}</span>}
+          {prog.check > 0 && <span title="Checklist" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: prog.checkDone === prog.check ? statusColor(T, "concluido") : T.textMuted }}><CheckCircle2 size={12} /> {prog.checkDone}/{prog.check}</span>}
+          {nAnexos > 0 && <span title="Anexos" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Paperclip size={12} /> {nAnexos}</span>}
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: 10 }}>
         <InfoBox T={T} label="Responsável">
@@ -257,7 +119,7 @@ function TaskCard({ T, btn, ghost, task, isMine, onEdit, onMove, onDragStart, on
         <button onClick={() => onMove(task, -1)} disabled={isFirst} aria-label="Mover para a coluna anterior" className="tk-nav-btn" style={{ width: 24, height: 26, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, border: `1px solid ${T.border}`, background: "transparent", color: isFirst ? T.textFaint : T.textMuted, opacity: isFirst ? .35 : 1, cursor: isFirst ? "default" : "pointer", flexShrink: 0 }}><ChevronLeft size={13} /></button>
         <button onClick={() => onMove(task, 1)} disabled={isLast} aria-label="Mover para a próxima coluna" className="tk-nav-btn" style={{ width: 24, height: 26, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, border: `1px solid ${T.border}`, background: "transparent", color: isLast ? T.textFaint : T.textMuted, opacity: isLast ? .35 : 1, cursor: isLast ? "default" : "pointer", flexShrink: 0 }}><ChevronRight size={13} /></button>
 
-        <button onClick={() => onEdit(task)} className="tk-pill-btn" style={{ ...ghost(), flex: 1, borderRadius: 999, padding: "7px 10px", fontSize: 11 }}>Detalhes</button>
+        <button onClick={() => onOpen(task.id)} className="tk-pill-btn" style={{ ...ghost(), flex: 1, borderRadius: 999, padding: "7px 10px", fontSize: 11 }}>Abrir</button>
 
         {isLast ? (
           <span style={{ flex: 1.3, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, borderRadius: 999, padding: "7px 10px", fontSize: 11, fontWeight: 700, color: T.textFaint, background: T.panelAlt }}><CheckCircle2 size={12} /> Concluída</span>
@@ -269,41 +131,28 @@ function TaskCard({ T, btn, ghost, task, isMine, onEdit, onMove, onDragStart, on
   );
 }
 
-// Uma linha compacta de tarefa dentro do cartão de uma pessoa (visão "Por
-// Pessoa") — clicar abre o mesmo modal de edição do quadro, pra não ter
-// dois lugares diferentes editando a mesma coisa de jeitos diferentes.
-function PersonTaskRow({ T, task, onEdit }) {
+// Linha compacta de tarefa dentro do cartão de uma pessoa (visão "Por Pessoa").
+function PersonTaskRow({ T, task, onOpen }) {
   const cfg = TASK_STATUS[task.status];
-  const dot = T.isLight ? cfg.dot.light : cfg.dot.dark;
   const due = dueInfo(task.prazo, T, task.status);
-  // Flag de prioridade só aparece aqui pra alta/urgente — nesta linha
-  // compacta (visão "Por Pessoa") o espaço é curto, então só vale destacar
-  // o que precisa de atenção, igual ao critério que o selo de prazo já usa.
-  const pcfg = TASK_PRIORITY[task.prioridade];
-  const showPriority = pcfg && (task.prioridade === "alta" || task.prioridade === "urgente");
-  const pColor = showPriority ? (T.isLight ? pcfg.color.light : pcfg.color.dark) : null;
+  const showPriority = task.prioridade === "alta" || task.prioridade === "urgente";
   return (
     <button
       className="task-person-row"
-      onClick={() => onEdit(task)}
-      style={{
-        display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", borderRadius: 6, border: "none",
-        background: "transparent", cursor: "pointer", textAlign: "left", width: "100%", fontFamily: "inherit",
-      }}
+      onClick={() => onOpen(task.id)}
+      style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", borderRadius: 6, border: "none", background: "transparent", cursor: "pointer", textAlign: "left", width: "100%", fontFamily: "inherit" }}
     >
-      <span title={cfg.label} style={{ width: 7, height: 7, borderRadius: "50%", background: dot, flexShrink: 0 }} />
-      {showPriority && <Flag size={10} strokeWidth={2.5} style={{ color: pColor, flexShrink: 0 }} />}
+      <span title={cfg.label} style={{ width: 7, height: 7, borderRadius: "50%", background: statusColor(T, task.status), flexShrink: 0 }} />
+      {showPriority && <PriorityBadge T={T} prioridade={task.prioridade} compact />}
       <span style={{ fontSize: 12, color: T.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        {task.titulo}{task.categoria ? <span style={{ color: T.textFaint, fontWeight: 500 }}> · {task.categoria}</span> : null}
+        {task.parent_id ? "↳ " : ""}{task.titulo}{task.categoria ? <span style={{ color: T.textFaint, fontWeight: 500 }}> · {task.categoria}</span> : null}
       </span>
       {due.full && <span style={{ fontSize: 9.5, fontWeight: 700, color: due.color, flexShrink: 0 }}>{due.full}</span>}
     </button>
   );
 }
 
-// Cartão de uma pessoa na visão "Por Pessoa": nome, badge de pendências e a
-// lista das tarefas dela (concluídas por último, mais urgentes primeiro).
-function PersonCard({ T, name, list, onEdit, isMe, muted, delay }) {
+function PersonCard({ T, name, list, onOpen, isMe, muted, delay }) {
   const openCount = list.filter(t => t.status !== "concluido").length;
   return (
     <div className="tk-card" style={{ animationDelay: `${delay}ms`, background: T.panel, border: `1px solid ${T.border}`, borderRadius: 10 }}>
@@ -315,21 +164,17 @@ function PersonCard({ T, name, list, onEdit, isMe, muted, delay }) {
       </div>
       {list.length > 0 && (
         <div style={{ padding: 6, display: "flex", flexDirection: "column" }}>
-          {list.map(t => <PersonTaskRow key={t.id} T={T} task={t} onEdit={onEdit} />)}
+          {list.map(t => <PersonTaskRow key={t.id} T={T} task={t} onOpen={onOpen} />)}
         </div>
       )}
     </div>
   );
 }
 
-// Agrupa as tarefas por responsável — cada pessoa da equipe aparece sempre
-// (mesmo sem tarefa, pra deixar claro que ela está livre), mais um grupo
-// "Sem responsável" no fim se houver tarefa sem ninguém atribuído.
-function PorPessoaView({ T, tasks, team, currentUser, onEdit }) {
+function PorPessoaView({ T, tasks, team, currentUser, onOpen }) {
   const { porPessoa, semResponsavel } = useMemo(() => {
-    const rank = (t) => (t.status === "concluido" ? 1 : 0); // pendentes primeiro, concluídas por último
-    const prio = (t) => TASK_PRIORITY[t.prioridade]?.order ?? TASK_PRIORITY.media.order;
-    const cmp = (a, b) => rank(a) - rank(b) || prio(b) - prio(a) || (a.prazo || "9999-99-99").localeCompare(b.prazo || "9999-99-99");
+    const rank = (t) => (t.status === "concluido" ? 1 : 0);
+    const cmp = (a, b) => rank(a) - rank(b) || priorityOrder(b) - priorityOrder(a) || (a.prazo || "9999-99-99").localeCompare(b.prazo || "9999-99-99");
     return {
       porPessoa: team.map(name => ({ name, list: tasks.filter(t => (t.responsaveis || []).includes(name)).sort(cmp) })),
       semResponsavel: tasks.filter(t => !(t.responsaveis || []).length).sort(cmp),
@@ -339,139 +184,251 @@ function PorPessoaView({ T, tasks, team, currentUser, onEdit }) {
   return (
     <div className="tk-view" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {porPessoa.map(({ name, list }, i) => (
-        <PersonCard key={name} T={T} name={name} list={list} onEdit={onEdit} isMe={name === currentUser} delay={Math.min(i * 40, 240)} />
+        <PersonCard key={name} T={T} name={name} list={list} onOpen={onOpen} isMe={name === currentUser} delay={Math.min(i * 40, 240)} />
       ))}
-      {semResponsavel.length > 0 && (
-        <PersonCard T={T} name="Sem responsável" list={semResponsavel} onEdit={onEdit} muted delay={Math.min(porPessoa.length * 40, 240)} />
-      )}
-      {porPessoa.length === 0 && semResponsavel.length === 0 && (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 16px", color: T.textFaint }}>
-          <Users size={26} strokeWidth={1.6} />
-          <div style={{ fontSize: 12 }}>Nenhuma tarefa criada ainda.</div>
+      {semResponsavel.length > 0 && <PersonCard T={T} name="Sem responsável" list={semResponsavel} onOpen={onOpen} muted delay={Math.min(porPessoa.length * 40, 240)} />}
+      {porPessoa.length === 0 && semResponsavel.length === 0 && <EmptyState T={T} icon={Users}>Nenhuma tarefa encontrada.</EmptyState>}
+    </div>
+  );
+}
+
+// Barra de busca + filtros (vale pra todas as visões, menos Projetos).
+function FilterBar({ T, q, setQ, filters, setFilters, team, projects, categories, tab }) {
+  const { inp, ghost } = makeStyleHelpers(T);
+  const [open, setOpen] = useState(false);
+  const active = Object.entries(filters).filter(([k, v]) => v !== EMPTY_FILTERS[k] && !(k === "status" && tab === "quadro")).length;
+  const set = (k) => (e) => setFilters(f => ({ ...f, [k]: e.target.value }));
+  const lbl = (c) => <div style={{ fontSize: 10, fontWeight: 700, color: T.textFaint, marginBottom: 3, textTransform: "uppercase", letterSpacing: .6 }}>{c}</div>;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ position: "relative", flex: 1 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: T.textFaint, pointerEvents: "none" }} />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar tarefa…" style={inp({ paddingLeft: 32, paddingRight: q ? 30 : 10, fontSize: 13, padding: "9px 10px 9px 32px" })} />
+          {q && <button onClick={() => setQ("")} aria-label="Limpar busca" style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: T.textFaint, cursor: "pointer", display: "flex", padding: 4 }}><X size={14} /></button>}
+        </div>
+        <button onClick={() => setOpen(o => !o)} className="tk-pill-btn" style={{ ...ghost(), borderRadius: 10, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderColor: active ? T.accent : T.border, color: active ? T.accent : T.text }}>
+          <SlidersHorizontal size={14} /> Filtros{active ? ` (${active})` : ""}
+        </button>
+      </div>
+      {open && (
+        <div className="tk-view" style={{ background: T.panel, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10 }}>
+          <div>{lbl("Responsável")}
+            <select value={filters.resp} onChange={set("resp")} style={inp()}>
+              <option value="todos">Todos</option>
+              <option value="minhas">Minhas tarefas</option>
+              <option value="ninguem">Sem responsável</option>
+              {team.map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
+          {tab !== "quadro" && <div>{lbl("Status")}
+            <select value={filters.status} onChange={set("status")} style={inp()}>
+              <option value="todos">Todos</option>
+              <option value="abertas">Em aberto</option>
+              {COLS.map(c => <option key={c} value={c}>{TASK_STATUS[c].label}</option>)}
+            </select>
+          </div>}
+          <div>{lbl("Prioridade")}
+            <select value={filters.prio} onChange={set("prio")} style={inp()}>
+              <option value="todas">Todas</option>
+              {PRIORITIES.map(p => <option key={p} value={p}>{TASK_PRIORITY[p].label}</option>)}
+            </select>
+          </div>
+          <div>{lbl("Prazo")}
+            <select value={filters.prazo} onChange={set("prazo")} style={inp()}>
+              <option value="todos">Todos</option>
+              <option value="atrasadas">Atrasadas</option>
+              <option value="hoje">Hoje</option>
+              <option value="semana">Próximos 7 dias</option>
+              <option value="sem">Sem prazo</option>
+            </select>
+          </div>
+          <div>{lbl("Projeto")}
+            <select value={filters.projeto} onChange={set("projeto")} style={inp()}>
+              <option value="todos">Todos</option>
+              <option value="sem">Sem projeto</option>
+              {projects.map(p => <option key={p.id} value={String(p.id)}>{p.nome}</option>)}
+            </select>
+          </div>
+          <div>{lbl("Categoria")}
+            <select value={filters.cat} onChange={set("cat")} style={inp()}>
+              <option value="todas">Todas</option>
+              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          {(tab === "quadro" || tab === "tabela") && (
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: T.text, cursor: "pointer", alignSelf: "end", paddingBottom: 6 }}>
+              <input type="checkbox" checked={filters.subs} onChange={e => setFilters(f => ({ ...f, subs: e.target.checked }))} style={{ accentColor: T.accent, width: 15, height: 15 }} />
+              Mostrar subtarefas
+            </label>
+          )}
+          {active > 0 && (
+            <button onClick={() => setFilters(EMPTY_FILTERS)} style={{ ...ghost(), alignSelf: "end", color: "#ef4444", borderColor: "#ef444430" }}>Limpar filtros</button>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-export function Tarefas({ T, tasks, team, currentUser, onCreate, onUpdate, onUpdateStatus, onDelete, showToast }) {
+function applyFilters(tasks, { q, filters, currentUser, tab }) {
+  const term = q.trim().toLowerCase();
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const daysTo = (p) => Math.round((new Date(`${p}T00:00:00`) - today) / 86400000);
+  return tasks.filter(t => {
+    if (term && !(`${t.titulo} ${t.descricao || ""} ${t.categoria || ""}`.toLowerCase().includes(term))) return false;
+    const resp = t.responsaveis || [];
+    if (filters.resp === "minhas" && !resp.includes(currentUser)) return false;
+    if (filters.resp === "ninguem" && resp.length) return false;
+    if (!["todos", "minhas", "ninguem"].includes(filters.resp) && !resp.includes(filters.resp)) return false;
+    if (tab !== "quadro") {
+      if (filters.status === "abertas" && t.status === "concluido") return false;
+      if (COLS.includes(filters.status) && t.status !== filters.status) return false;
+    }
+    if (filters.prio !== "todas" && (t.prioridade || "media") !== filters.prio) return false;
+    if (filters.projeto === "sem" && t.projeto_id) return false;
+    if (!["todos", "sem"].includes(filters.projeto) && String(t.projeto_id) !== filters.projeto) return false;
+    if (filters.cat !== "todas" && t.categoria !== filters.cat) return false;
+    if (filters.prazo !== "todos") {
+      if (filters.prazo === "sem") { if (t.prazo) return false; }
+      else {
+        if (!t.prazo || t.status === "concluido") return false;
+        const d = daysTo(t.prazo);
+        if (filters.prazo === "atrasadas" && d >= 0) return false;
+        if (filters.prazo === "hoje" && d !== 0) return false;
+        if (filters.prazo === "semana" && (d < 0 || d > 7)) return false;
+      }
+    }
+    // Quadro/Tabela: só tarefas "de cima", a não ser que peça as subtarefas
+    // ou esteja buscando algo (aí a filha que bate com a busca aparece).
+    if ((tab === "quadro" || tab === "tabela") && t.parent_id && !filters.subs && !term) return false;
+    return true;
+  });
+}
+
+export function Tarefas({ T, tasks, projects, team, currentUser, myUid, isAdmin, api, showToast }) {
   const { inp, btn, ghost } = makeStyleHelpers(T);
   const lbl = (children) => <div style={{ fontSize: 10, fontWeight: 700, color: T.textFaint, marginBottom: 3, textTransform: "uppercase", letterSpacing: .6 }}>{children}</div>;
 
-  const [tab, setTab] = useState("quadro"); // "quadro" | "pessoa"
-  const [modal, setModal] = useState(null); // { type: "new" } | { type: "edit", id }
-  const [form, setForm] = useState({ titulo: "", descricao: "", responsaveis: [], prazo: "", status: "a_fazer", categoria: "", prioridade: "media" });
+  const [tab, setTabState] = useState(readTab);
+  const setTab = (t) => { setTabState(t); try { localStorage.setItem(TAB_KEY, t); } catch { /* sem storage: só não lembra */ } };
+  const [openTaskId, setOpenTaskId] = useState(null);
+  const [openProjectId, setOpenProjectId] = useState(null);
+  const [newModal, setNewModal] = useState(false);
+  const [projectModal, setProjectModal] = useState(false);
+  const [form, setForm] = useState(null);
   const [dragId, setDragId] = useState(null);
   const [dragOverCol, setDragOverCol] = useState(null);
-  const [catFilter, setCatFilter] = useState("todas"); // "todas" | nome da categoria
+  const [q, setQ] = useState("");
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
 
-  const openNew = () => { setForm({ titulo: "", descricao: "", responsaveis: currentUser ? [currentUser] : [], prazo: "", status: "a_fazer", categoria: "", prioridade: "media" }); setModal({ type: "new" }); };
-  const openEdit = (t) => { setForm({ titulo: t.titulo, descricao: t.descricao || "", responsaveis: t.responsaveis || [], prazo: t.prazo || "", status: t.status, categoria: t.categoria || "", prioridade: t.prioridade || "media" }); setModal({ type: "edit", id: t.id }); };
-  const closeModal = () => setModal(null);
+  const openTask = tasks.find(t => t.id === openTaskId) || null;
+  const openProject = projects.find(p => p.id === openProjectId) || null;
+  // Se a tarefa/projeto aberto sumir (excluído), volta pra lista sozinho.
+  useEffect(() => { if (openTaskId != null && !openTask) setOpenTaskId(null); }, [openTaskId, openTask]);
+  useEffect(() => { if (openProjectId != null && !openProject) setOpenProjectId(null); }, [openProjectId, openProject]);
+  // Abrir página nova começa do topo (no celular a lista pode estar rolada).
+  useEffect(() => { window.scrollTo({ top: 0 }); document.querySelector("main")?.scrollTo?.({ top: 0 }); }, [openTaskId, openProjectId]);
 
-  const submit = () => {
+  const goTask = (id) => setOpenTaskId(id);
+  const goProject = (id) => { setOpenTaskId(null); setOpenProjectId(id); };
+
+  const projectsById = useMemo(() => Object.fromEntries(projects.map(p => [p.id, p])), [projects]);
+  const tasksById = useMemo(() => Object.fromEntries(tasks.map(t => [t.id, t])), [tasks]);
+  const categoriesUsed = useMemo(() => Array.from(new Set(tasks.map(t => t.categoria).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR")), [tasks]);
+  const visibleTasks = useMemo(() => applyFilters(tasks, { q, filters, currentUser, tab }), [tasks, q, filters, currentUser, tab]);
+
+  const openNew = () => {
+    setForm({ titulo: "", descricao: "", responsaveis: currentUser ? [currentUser] : [], prazo: "", categoria: "", prioridade: "media", projeto_id: filters.projeto !== "todos" && filters.projeto !== "sem" ? filters.projeto : "" });
+    setNewModal(true);
+  };
+  const submitNew = async (andOpen) => {
     const titulo = form.titulo.trim();
     if (!titulo) return showToast("Digite um título pra tarefa", "err");
-    const payload = { titulo, descricao: form.descricao.trim(), responsaveis: form.responsaveis, prazo: form.prazo || null, categoria: form.categoria.trim() || null, prioridade: form.prioridade };
-    if (modal.type === "new") onCreate(payload);
-    else onUpdate(modal.id, { ...payload, status: form.status });
-    closeModal();
+    const payload = { titulo, descricao: form.descricao.trim(), responsaveis: form.responsaveis, prazo: form.prazo || null, categoria: form.categoria.trim() || null, prioridade: form.prioridade, projeto_id: form.projeto_id ? Number(form.projeto_id) : null, parent_id: null };
+    setNewModal(false);
+    const saved = await api.createTask(payload);
+    if (saved && andOpen) setOpenTaskId(saved.id);
   };
-
-  // Segregação por categoria (10/2026) — "legal segregar pro projeto/infra/
-  // compras etc", pedido do usuário a partir de um print de referência.
-  // Sem tela de gestão própria: as opções do filtro são simplesmente as
-  // categorias que já foram digitadas em alguma tarefa (texto livre), então
-  // a lista cresce sozinha conforme o time usa.
-  const categoriesUsed = useMemo(() => {
-    const set = new Set(tasks.map(t => t.categoria).filter(Boolean));
-    return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
-  }, [tasks]);
-  const visibleTasks = catFilter === "todas" ? tasks : tasks.filter(t => t.categoria === catFilter);
 
   const moveTask = (task, dir) => {
-    const idx = COLS.indexOf(task.status);
-    const next = COLS[idx + dir];
-    if (next) onUpdateStatus(task.id, next);
+    const next = COLS[COLS.indexOf(task.status) + dir];
+    if (next) api.updateStatus(task.id, next);
   };
-
   const onDragStart = (e, id) => { setDragId(id); e.dataTransfer.effectAllowed = "move"; };
   const onDragEnd = () => { setDragId(null); setDragOverCol(null); };
   const onDropCol = (e, col) => {
     e.preventDefault();
-    if (dragId != null) onUpdateStatus(dragId, col);
+    if (dragId != null) api.updateStatus(dragId, col);
     setDragId(null); setDragOverCol(null);
   };
 
-  // Prioridade primeiro (urgente no topo), depois prazo mais próximo (sem
-  // prazo vai pro fim), e em empate a mais recém-criada — mesma ideia de "o
-  // que precisa de atenção agora aparece no topo", sem precisar de
-  // reordenação manual (arrastar dentro da mesma coluna só muda de status,
-  // não a ordem — mantém simples). Respeita o filtro de categoria ativo.
+  // Prioridade primeiro (urgente no topo), depois prazo mais próximo, e em
+  // empate a mais recente.
   const sorted = (col) => visibleTasks
     .filter(t => t.status === col)
-    .sort((a, b) => {
-      const prio = (TASK_PRIORITY[b.prioridade]?.order ?? TASK_PRIORITY.media.order) - (TASK_PRIORITY[a.prioridade]?.order ?? TASK_PRIORITY.media.order);
-      if (prio) return prio;
-      return (a.prazo || "9999-99-99").localeCompare(b.prazo || "9999-99-99") || (b.criado_em_iso || "").localeCompare(a.criado_em_iso || "");
-    });
+    .sort((a, b) => priorityOrder(b) - priorityOrder(a)
+      || (a.prazo || "9999-99-99").localeCompare(b.prazo || "9999-99-99")
+      || (b.criado_em_iso || "").localeCompare(a.criado_em_iso || ""));
+
+  // ── páginas (tarefa / projeto) ──
+  if (openTask) {
+    return (
+      <div>
+        <TaskStyles T={T} />
+        <TaskPage
+          T={T} task={openTask} tasks={tasks} projects={projects} team={team} currentUser={currentUser} myUid={myUid} isAdmin={isAdmin}
+          api={api} showToast={showToast} onOpenTask={goTask} onOpenProject={goProject}
+          onBack={() => setOpenTaskId(null)}
+        />
+      </div>
+    );
+  }
+  if (openProject) {
+    return (
+      <div>
+        <TaskStyles T={T} />
+        <ProjetoPage
+          T={T} project={openProject} tasks={tasks} currentUser={currentUser}
+          onBack={() => setOpenProjectId(null)} onOpenTask={goTask}
+          onUpdate={api.updateProject} onDelete={api.deleteProject} onCreateTask={api.createTask}
+        />
+      </div>
+    );
+  }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
       <TaskStyles T={T} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <div className="tk-tab-track">
-          <div className="tk-tab-indicator" style={{ transform: tab === "pessoa" ? "translateX(100%)" : "translateX(0)" }} />
-          <button onClick={() => setTab("quadro")} className="tk-chip-btn" style={{
-            position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 7, border: "none", cursor: "pointer",
-            fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, background: "transparent", color: tab === "quadro" ? T.accent : T.textMuted,
-          }}><Kanban size={14} /> Quadro</button>
-          <button onClick={() => setTab("pessoa")} className="tk-chip-btn" style={{
-            position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 7, border: "none", cursor: "pointer",
-            fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, background: "transparent", color: tab === "pessoa" ? T.accent : T.textMuted,
-          }}><Users size={14} /> Por Pessoa</button>
-        </div>
-        <button onClick={openNew} className="tk-pill-btn" style={{ ...btn(T.accent), borderRadius: 999, display: "flex", alignItems: "center", gap: 6, padding: "9px 16px" }}><Plus size={14} strokeWidth={2.5} /> Nova Tarefa</button>
-      </div>
-
-      {categoriesUsed.length > 0 && (
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <button
-            onClick={() => setCatFilter("todas")}
-            className="tk-chip-btn"
-            style={{
-              display: "flex", alignItems: "center", padding: "6px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700,
-              border: `1px solid ${catFilter === "todas" ? T.accent : T.border}`, background: catFilter === "todas" ? `${T.accent}18` : "transparent", color: catFilter === "todas" ? T.accent : T.textMuted,
-            }}
-          >Todas</button>
-          {categoriesUsed.map(c => {
-            const color = categoryColor(c);
-            const active = catFilter === c;
+        <div className="tk-tabs" role="tablist">
+          {TABS.map(({ key, label, icon: Icon }) => {
+            const on = tab === key;
             return (
-              <button
-                key={c}
-                onClick={() => setCatFilter(c)}
-                className="tk-chip-btn"
-                style={{
-                  display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700,
-                  border: `1px solid ${active ? color : T.border}`, background: active ? `${color}18` : "transparent", color: active ? color : T.textMuted,
-                }}
-              >
-                <span style={{ width: 7, height: 7, borderRadius: "50%", background: color, flexShrink: 0 }} />
-                {c}
-              </button>
+              <button key={key} role="tab" aria-selected={on} onClick={() => setTab(key)} className="tk-chip-btn" style={{
+                display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 7, border: "none", cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, background: on ? T.panel : "transparent", color: on ? T.accent : T.textMuted,
+                boxShadow: on ? "0 1px 4px rgba(0,0,0,.18)" : "none",
+              }}><Icon size={14} /> {label}</button>
             );
           })}
         </div>
+        {tab === "projetos"
+          ? <button onClick={() => setProjectModal(true)} className="tk-pill-btn" style={{ ...btn(T.accent), borderRadius: 999, display: "flex", alignItems: "center", gap: 6, padding: "9px 16px" }}><Plus size={14} strokeWidth={2.5} /> Novo Projeto</button>
+          : <button onClick={openNew} className="tk-pill-btn" style={{ ...btn(T.accent), borderRadius: 999, display: "flex", alignItems: "center", gap: 6, padding: "9px 16px" }}><Plus size={14} strokeWidth={2.5} /> Nova Tarefa</button>}
+      </div>
+
+      {tab !== "projetos" && (
+        <FilterBar T={T} q={q} setQ={setQ} filters={filters} setFilters={setFilters} team={team} projects={projects} categories={categoriesUsed} tab={tab} />
       )}
 
-      {tab === "quadro" ? (
+      {tab === "quadro" && (
         <div className="tk-view">
           <div className="tasks-board" style={{ display: "grid", gap: 14 }}>
             {COLS.map(col => {
               const list = sorted(col);
               const cfg = TASK_STATUS[col];
-              const dot = T.isLight ? cfg.dot.light : cfg.dot.dark;
+              const dot = statusColor(T, col);
               return (
                 <div
                   key={col}
@@ -490,8 +447,11 @@ export function Tarefas({ T, tasks, team, currentUser, onCreate, onUpdate, onUpd
                     {list.length === 0 && <div style={{ padding: "20px 8px", fontSize: 11, color: T.textFaint, textAlign: "center" }}>Nenhuma tarefa aqui.</div>}
                     {list.map((t, i) => (
                       <TaskCard
-                        key={t.id} T={T} btn={btn} ghost={ghost} task={t} isMine={(t.responsaveis || []).includes(currentUser)}
-                        onEdit={openEdit} onMove={moveTask} onDragStart={onDragStart} onDragEnd={onDragEnd} isDragging={dragId === t.id}
+                        key={t.id} T={T} btn={btn} ghost={ghost} task={t} allTasks={tasks}
+                        project={t.projeto_id ? projectsById[t.projeto_id] : null}
+                        parentTitle={t.parent_id ? tasksById[t.parent_id]?.titulo : null}
+                        isMine={(t.responsaveis || []).includes(currentUser)}
+                        onOpen={goTask} onMove={moveTask} onDragStart={onDragStart} onDragEnd={onDragEnd} isDragging={dragId === t.id}
                         isFirst={COLS.indexOf(t.status) === 0} isLast={COLS.indexOf(t.status) === COLS.length - 1} delay={Math.min(i * 40, 240)}
                       />
                     ))}
@@ -500,33 +460,24 @@ export function Tarefas({ T, tasks, team, currentUser, onCreate, onUpdate, onUpd
               );
             })}
           </div>
-
-          {tasks.length === 0 && (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 16px", color: T.textFaint }}>
-              <ClipboardCheck size={26} strokeWidth={1.6} />
-              <div style={{ fontSize: 12 }}>Nenhuma tarefa criada ainda — comece com "Nova Tarefa".</div>
-            </div>
-          )}
-          {tasks.length > 0 && visibleTasks.length === 0 && (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 16px", color: T.textFaint }}>
-              <Tag size={26} strokeWidth={1.6} />
-              <div style={{ fontSize: 12 }}>Nenhuma tarefa na categoria "{catFilter}".</div>
-            </div>
-          )}
+          {tasks.length === 0 && <EmptyState T={T} icon={ClipboardCheck}>Nenhuma tarefa criada ainda — comece com "Nova Tarefa".</EmptyState>}
+          {tasks.length > 0 && visibleTasks.length === 0 && <EmptyState T={T} icon={Tag}>Nenhuma tarefa com esses filtros.</EmptyState>}
         </div>
-      ) : (
-        <PorPessoaView T={T} tasks={visibleTasks} team={team} currentUser={currentUser} onEdit={openEdit} />
       )}
+      {tab === "tabela" && <TabelaView T={T} tasks={visibleTasks} allTasks={tasks} projects={projects} onOpen={goTask} onUpdateStatus={api.updateStatus} />}
+      {tab === "calendario" && <CalendarioView T={T} tasks={visibleTasks} onOpen={goTask} />}
+      {tab === "pessoa" && <PorPessoaView T={T} tasks={visibleTasks} team={team} currentUser={currentUser} onOpen={goTask} />}
+      {tab === "projetos" && <ProjetosView T={T} projects={projects} tasks={tasks} onOpenProject={goProject} onNew={() => setProjectModal(true)} />}
 
-      {modal && (
-        <Overlay T={T} onClose={closeModal}>
-          <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 700, color: T.textBright }}>{modal.type === "new" ? "Nova Tarefa" : "Editar Tarefa"}</h3>
+      {newModal && form && (
+        <Overlay T={T} onClose={() => setNewModal(false)}>
+          <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 700, color: T.textBright }}>Nova Tarefa</h3>
 
           {lbl("Título *")}
           <input autoFocus value={form.titulo} onChange={e => setForm(p => ({ ...p, titulo: e.target.value }))} placeholder="ex: Revisar estoque do almoxarifado" style={inp({ marginBottom: 10 })} />
 
           {lbl("Descrição")}
-          <textarea value={form.descricao} onChange={e => setForm(p => ({ ...p, descricao: e.target.value }))} placeholder="Detalhe opcional" rows={3} style={{ ...inp({ marginBottom: 10 }), resize: "vertical", fontFamily: "inherit" }} />
+          <textarea value={form.descricao} onChange={e => setForm(p => ({ ...p, descricao: e.target.value }))} placeholder="Detalhe opcional" rows={3} style={{ ...inp({ marginBottom: 10 }), resize: "vertical" }} />
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
             <div>
@@ -539,19 +490,11 @@ export function Tarefas({ T, tasks, team, currentUser, onCreate, onUpdate, onUpd
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 4 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
             <div>
               {lbl("Categoria")}
-              <input
-                value={form.categoria}
-                onChange={e => setForm(p => ({ ...p, categoria: e.target.value }))}
-                placeholder="ex: Projeto, Infra, Compras"
-                list="tk-cat-options"
-                style={inp()}
-              />
-              <datalist id="tk-cat-options">
-                {categoriesUsed.map(c => <option key={c} value={c} />)}
-              </datalist>
+              <input value={form.categoria} onChange={e => setForm(p => ({ ...p, categoria: e.target.value }))} placeholder="ex: Infra, Compras" list="tk-cat-options" style={inp()} />
+              <datalist id="tk-cat-options">{categoriesUsed.map(c => <option key={c} value={c} />)}</datalist>
             </div>
             <div>
               {lbl("Prioridade")}
@@ -561,20 +504,21 @@ export function Tarefas({ T, tasks, team, currentUser, onCreate, onUpdate, onUpd
             </div>
           </div>
 
-          {modal.type === "edit" && <>
-            {lbl("Status")}
-            <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value }))} style={inp({ marginBottom: 4 })}>
-              {COLS.map(c => <option key={c} value={c}>{TASK_STATUS[c].label}</option>)}
-            </select>
-          </>}
+          {lbl("Projeto")}
+          <select value={form.projeto_id} onChange={e => setForm(p => ({ ...p, projeto_id: e.target.value }))} style={inp({ marginBottom: 4 })}>
+            <option value="">Nenhum</option>
+            {projects.map(p => <option key={p.id} value={String(p.id)}>{p.nome}</option>)}
+          </select>
 
           <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-            {modal.type === "edit" && (
-              <button onClick={() => { onDelete({ id: modal.id, titulo: form.titulo }); closeModal(); }} className="tk-pill-btn" style={{ ...ghost(), borderRadius: 999, color: "#ef4444", borderColor: "#ef444430" }}>Excluir</button>
-            )}
-            <button onClick={submit} className="tk-pill-btn" style={{ ...btn(T.accent), borderRadius: 999, flex: 1, padding: "10px" }}>{modal.type === "new" ? "Criar tarefa" : "Salvar alterações"}</button>
+            <button onClick={() => submitNew(true)} className="tk-pill-btn" style={{ ...ghost(), borderRadius: 999, flex: 1, padding: "10px" }}>Criar e abrir</button>
+            <button onClick={() => submitNew(false)} className="tk-pill-btn" style={{ ...btn(T.accent), borderRadius: 999, flex: 1, padding: "10px" }}>Criar tarefa</button>
           </div>
         </Overlay>
+      )}
+
+      {projectModal && (
+        <ProjectModal T={T} onClose={() => setProjectModal(false)} onSave={async (p) => { setProjectModal(false); const saved = await api.createProject(p); if (saved) goProject(saved.id); }} />
       )}
     </div>
   );
