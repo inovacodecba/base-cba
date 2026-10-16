@@ -17,6 +17,7 @@ import { docStatus, isImageFile, makeThumbnail } from "./components/documents/he
 import { Configuracoes } from "./components/settings/Configuracoes.jsx";
 import { Ponto } from "./components/ponto/Ponto.jsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.jsx";
+import { PulsoLogo } from "./components/PulsoLogo.jsx";
 import { BancoHorasCard } from "./components/ponto/BancoHorasCard.jsx";
 
 // Mapa carregado sob demanda (otimização de carregamento, 04/2026): é o único
@@ -1464,7 +1465,7 @@ export default function App() {
       alignItems: "center", justifyContent: "center", padding: 20, overflow: "hidden",
       background: `linear-gradient(150deg, ${T.bg} 0%, ${T.panel} 50%, ${T.bg} 100%)`,
     }}>
-      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
       {/* Fundo decorativo: manchas desfocadas + um "blob" em SVG + sparkles
           que piscam — tudo position:absolute/pointer-events:none, então não
           interfere em layout, tab order ou cliques. Cores vêm de T.accent
@@ -1499,14 +1500,8 @@ export default function App() {
         {theme === "dark" ? <Moon size={16} /> : <Sun size={16} />}
       </button>
       <div className="lg-card" style={{ position: "relative", zIndex: 1, background: T.panel, borderRadius: 20, padding: "34px 30px", width: "100%", maxWidth: 360, border: `1px solid ${T.border}`, boxShadow: `0 24px 60px ${T.accent}20, 0 10px 30px rgba(0,0,0,.3)` }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
-          <div style={{ width: 34, height: 34, borderRadius: 10, background: `${T.accent}1c`, border: `1px solid ${T.accent}33`, display: "flex", alignItems: "center", justifyContent: "center", color: T.accent, flexShrink: 0 }}>
-            <Sparkles size={17} />
-          </div>
-          <div>
-            <div style={{ fontSize: 10, letterSpacing: 3, color: T.textFaint, fontWeight: 700, textTransform: "uppercase", marginBottom: 2 }}>Inovacode</div>
-            <div style={{ fontSize: 19, fontWeight: 700, color: T.textBright, lineHeight: 1.1 }}>Base de Dados</div>
-          </div>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 26 }}>
+          <PulsoLogo size={40} color={T.textBright} />
         </div>
         {lbl("Quem é você?")}
         {/* Campo de texto livre, não mais um <select> com a lista de todos
@@ -1545,7 +1540,7 @@ export default function App() {
   // ── MAIN ──────────────────────────────────────────────────────────────────
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: T.bg, minHeight: "100vh", color: T.text, fontSize: 13 }}>
-      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
       <style>{`
         *{box-sizing:border-box}
         ::-webkit-scrollbar{width:5px;height:5px}

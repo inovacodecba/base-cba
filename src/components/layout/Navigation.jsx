@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { NAV_ITEMS } from "../../constants.js";
 import { bestTextOn } from "../../theme.js";
+import { PulsoLogo } from "../PulsoLogo.jsx";
 
 const ICONS = {
   LayoutDashboard, Boxes, ArrowLeftRight, Layers, FileText, Bell, MapPin, Map, Tags, Truck, Settings, FolderOpen, ClipboardCheck, QrCode,
@@ -142,8 +143,7 @@ export function Sidebar({ T, view, currentUser, isAdmin, theme, setTheme, onNavi
       }}>{initial}</button>
 
       <div style={{ paddingTop: 34, paddingBottom: 10, paddingLeft: 14, paddingRight: 14, textAlign: "center" }}>
-        <div style={{ fontSize: 8.5, letterSpacing: 2.5, color: T.textFaint, fontWeight: 700, textTransform: "uppercase" }}>Inovacode</div>
-        <div style={{ fontSize: 13, fontWeight: 700, color: T.textBright, marginTop: 1 }}>Base de Dados</div>
+        <div style={{ display: "flex", justifyContent: "center" }}><PulsoLogo size={22} color={T.textBright} /></div>
         <div style={{ fontSize: 10.5, color: T.textMuted, marginTop: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {currentUser}{isAdmin ? <span style={{ color: T.textFaint }}> · admin</span> : ""}
         </div>
@@ -252,8 +252,7 @@ export function MobileTopBar({ T, currentUser, alertCount, onAlertClick, onMenu 
       position: "sticky", top: 0, zIndex: 90,
     }}>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 8.5, letterSpacing: 2, color: T.textFaint, fontWeight: 700, textTransform: "uppercase" }}>Inovacode</div>
-        <div style={{ fontSize: 13, fontWeight: 700, color: T.textBright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Base de Dados</div>
+        <PulsoLogo size={22} color={T.textBright} />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
         <button onClick={onAlertClick} aria-label="Ver alertas" style={{ position: "relative", width: 30, height: 30, borderRadius: 6, border: `1px solid ${T.border}`, background: T.panelAlt, color: T.textMuted, display: "flex", alignItems: "center", justifyContent: "center" }}>
