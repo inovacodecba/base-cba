@@ -1,6 +1,6 @@
 {
-  "name": "Base de Dados",
-  "short_name": "Base de Dados",
+  "name": "Pulso",
+  "short_name": "Pulso",
   "description": "Controle de estoque e equipamentos - CBA",
   "start_url": "/base-cba/",
   "scope": "/base-cba/",
