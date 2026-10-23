@@ -2,6 +2,7 @@
 // App.jsx (telas de Inventário/Movimentações/modais) quanto pelo novo
 // Dashboard. Extraídos do App.jsx original — comportamento inalterado.
 import { useEffect, useRef, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { ArrowUp, ArrowDown, ArrowLeftRight, ArrowUpDown, Circle } from "lucide-react";
 import { CAT_COLOR } from "../constants.js";
 import { SC } from "../constants.js";
@@ -50,8 +51,11 @@ export function Overlay({ onClose, children, wide, T }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [close]);
-  return (
-    <div className={`ov-backdrop${closing ? " ov-closing" : ""}`} style={{ position: "fixed", inset: 0, background: T.overlay, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={close}>
+  // Portal no <body>: telas com animação (transform) viram a "caixa" do
+  // position:fixed — sem isso o modal ficava preso dentro da tela e as abas
+  // apareciam por cima dele (bug visto na Linha do tempo, 23/10/2026).
+  return createPortal(
+    <div className={`ov-backdrop${closing ? " ov-closing" : ""}`} style={{ position: "fixed", inset: 0, background: T.overlay, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: T.text }} onClick={close}>
       <style>{OVERLAY_CSS}</style>
       <div
         ref={panelRef}
@@ -60,12 +64,13 @@ export function Overlay({ onClose, children, wide, T }) {
         tabIndex={-1}
         className="ov-panel"
         onClick={e => e.stopPropagation()}
-        style={{ background: T.panel, borderRadius: 14, padding: "20px 22px 24px", width: "100%", maxWidth: wide ? 640 : 520, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 24px 60px rgba(0,0,0,.5)", outline: "none" }}
+        style={{ background: T.panel, borderRadius: 14, padding: "20px 22px 24px", width: "100%", maxWidth: wide ? 640 : 520, maxHeight: "90vh", overflowY: "auto", overflowX: "hidden", boxShadow: "0 24px 60px rgba(0,0,0,.5)", outline: "none" }}
       >
         <div className="ov-grip" style={{ width: 38, height: 4, borderRadius: 2, background: T.border, margin: "-8px auto 14px" }} />
         {children}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

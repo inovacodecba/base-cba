@@ -333,7 +333,10 @@ function TaskPicker({ T, tasks, projectsById, onClose, onConfirm }) {
     .filter(t => !t.data_inicio && (showDone || t.status !== "concluido"))
     .filter(t => !term || `${t.titulo} ${t.categoria || ""} ${projectsById[t.projeto_id]?.nome || ""}`.toLowerCase().includes(term))
     .sort((a, b) => (a.prazo || "9999").localeCompare(b.prazo || "9999") || a.titulo.localeCompare(b.titulo, "pt-BR"));
-  const toggle = (id) => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggle = (id) => setSel(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  // "Selecionar todas" vale para a lista que está aparecendo (respeita a busca)
+  const allSel = list.length > 0 && list.every(x => sel.has(x.id));
+  const toggleAll = () => setSel(s => { const n = new Set(s); list.forEach(x => (allSel ? n.delete(x.id) : n.add(x.id))); return n; });
   return (
     <Overlay T={T} onClose={onClose} wide>
       <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: T.textBright }}>Selecionar tarefas</h3>
@@ -342,9 +345,14 @@ function TaskPicker({ T, tasks, projectsById, onClose, onConfirm }) {
         <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: T.textFaint }} />
         <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar tarefa ou projeto…" style={inp({ padding: "9px 10px 9px 32px", fontSize: 13 })} />
       </div>
-      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: T.textMuted, marginBottom: 8, cursor: "pointer" }}>
-        <input type="checkbox" className="tk-check" checked={showDone} onChange={e => setShowDone(e.target.checked)} /> Mostrar concluídas
-      </label>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, fontWeight: 700, color: T.text, cursor: "pointer" }}>
+          <input type="checkbox" className="tk-check" checked={allSel} onChange={toggleAll} disabled={!list.length} /> Selecionar todas{list.length ? ` (${list.length})` : ""}
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: T.textMuted, cursor: "pointer", marginLeft: "auto" }}>
+          <input type="checkbox" className="tk-check" checked={showDone} onChange={e => setShowDone(e.target.checked)} /> Mostrar concluídas
+        </label>
+      </div>
       <div style={{ maxHeight: "48vh", overflowY: "auto", border: `1px solid ${T.border}`, borderRadius: 10 }}>
         {list.length === 0 && <div style={{ padding: 16, fontSize: 12, color: T.textFaint, textAlign: "center" }}>Nenhuma tarefa disponível (as que já estão na linha do tempo não aparecem aqui).</div>}
         {list.map(t => {
