@@ -2,7 +2,7 @@
 // tabela, calendário, por pessoa, projetos e a página da tarefa). Saíram do
 // Tarefas.jsx quando o módulo ganhou as funções "estilo Notion" (10/2026),
 // pra não ter cópia do mesmo badge/cálculo em vários arquivos.
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { ChevronDown, Flag, Tag } from "lucide-react";
 import { TASK_STATUS, TASK_PRIORITY } from "../../constants.js";
 
@@ -165,14 +165,31 @@ export function AvatarStack({ T, names, size = 18 }) {
 
 // Dropdown com checkboxes pra escolher vários responsáveis (equipe pequena,
 // sem lib de multi-select).
-export function TeamMultiSelect({ T, team, value, onChange, inp, style }) {
+// `fixed`: a lista abre por cima de tudo (position: fixed) — usado dentro da
+// tabela-planilha, onde a rolagem da tabela cortaria uma lista "absolute".
+// Nomes já gravados que não estão mais na equipe (ex.: "rodrigo junior"
+// digitado diferente) também aparecem, pra poder desmarcar.
+export function TeamMultiSelect({ T, team, value, onChange, inp, style, fixed }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
+  const btnRef = useRef(null);
+  const options = [...team, ...value.filter(n => !team.includes(n))];
+  const openList = () => {
+    if (fixed && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      const h = Math.min(230, options.length * 34 + 12);
+      const up = r.bottom + h + 8 > window.innerHeight;
+      setPos({ left: Math.min(r.left, window.innerWidth - 216), top: up ? r.top - h - 4 : r.bottom + 4, width: Math.max(r.width, 210) });
+    }
+    setOpen(o => !o);
+  };
   const toggle = (name) => onChange(value.includes(name) ? value.filter(n => n !== name) : [...value, name]);
   return (
     <div style={{ position: "relative" }}>
       <button
+        ref={btnRef}
         type="button"
-        onClick={() => setOpen(o => !o)}
+        onClick={openList}
         style={{ ...inp(), textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, ...style }}
       >
         <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
@@ -187,11 +204,11 @@ export function TeamMultiSelect({ T, team, value, onChange, inp, style }) {
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 20 }} />
           <div style={{
-            position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, minWidth: 200, background: T.panel, border: `1px solid ${T.border}`,
+            ...(fixed && pos ? { position: "fixed", top: pos.top, left: pos.left, width: pos.width } : { position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0 }), minWidth: 200, background: T.panel, border: `1px solid ${T.border}`,
             borderRadius: 8, padding: 4, zIndex: 21, maxHeight: 220, overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,.28)",
           }}>
-            {team.length === 0 && <div style={{ padding: 8, fontSize: 11.5, color: T.textFaint }}>Nenhum colaborador cadastrado.</div>}
-            {team.map(name => (
+            {options.length === 0 && <div style={{ padding: 8, fontSize: 11.5, color: T.textFaint }}>Nenhum colaborador cadastrado.</div>}
+            {options.map(name => (
               <label key={name} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 8px", borderRadius: 6, fontSize: 12.5, color: T.text, cursor: "pointer" }}>
                 <input type="checkbox" checked={value.includes(name)} onChange={() => toggle(name)} style={{ accentColor: T.accent, width: 15, height: 15, flexShrink: 0 }} />
                 {name}

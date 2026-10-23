@@ -71,6 +71,7 @@ function describeHistory(h) {
     case "titulo": return `renomeou de "${or(h.de, "—")}" para "${or(h.para, "—")}"`;
     case "status": return `mudou o status de ${st(h.de)} para ${st(h.para)}`;
     case "prioridade": return `mudou a prioridade de ${pr(h.de)} para ${pr(h.para)}`;
+    case "inicio": return h.para ? `colocou na linha do tempo a partir de ${fmtDateFull(h.para)}` : "tirou da linha do tempo";
     case "prazo": return `mudou o prazo de ${h.de ? fmtDateFull(h.de) : "sem prazo"} para ${h.para ? fmtDateFull(h.para) : "sem prazo"}`;
     case "responsaveis": return `mudou os responsáveis para ${or(h.para, "ninguém")}`;
     case "categoria": return `mudou a categoria para ${or(h.para, "nenhuma")}`;

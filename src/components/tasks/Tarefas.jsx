@@ -21,7 +21,7 @@
 import { useState, useMemo, useEffect, useLayoutEffect, useRef } from "react";
 import {
   Plus, ChevronLeft, ChevronRight, CalendarDays, ClipboardCheck, Kanban, Users, ArrowRight, CheckCircle2, Tag, Table2,
-  CalendarRange, FolderKanban, Search, SlidersHorizontal, X, ListTree, Paperclip, CornerDownRight,
+  CalendarRange, FolderKanban, GanttChart, Search, SlidersHorizontal, X, ListTree, Paperclip, CornerDownRight,
 } from "lucide-react";
 import { Overlay } from "../common.jsx";
 import { makeStyleHelpers } from "../../theme.js";
@@ -32,11 +32,13 @@ import {
 } from "./taskUi.jsx";
 import { TaskPage } from "./TaskPage.jsx";
 import { TabelaView, CalendarioView } from "./TaskViews.jsx";
+import { TimelineView } from "./Timeline.jsx";
 import { ProjetosView, ProjetoPage, ProjectModal } from "./Projetos.jsx";
 
 const TABS = [
   { key: "quadro", label: "Quadro", icon: Kanban },
   { key: "tabela", label: "Tabela", icon: Table2 },
+  { key: "timeline", label: "Linha do tempo", icon: GanttChart },
   { key: "calendario", label: "Calendário", icon: CalendarRange },
   { key: "pessoa", label: "Por Pessoa", icon: Users },
   { key: "projetos", label: "Projetos", icon: FolderKanban },
@@ -487,7 +489,14 @@ export function Tarefas({ T, tasks, projects, team, currentUser, myUid, isAdmin,
           {tasks.length > 0 && visibleTasks.length === 0 && <EmptyState T={T} icon={Tag}>Nenhuma tarefa com esses filtros.</EmptyState>}
         </div>
       )}
-      {tab === "tabela" && <TabelaView T={T} tasks={visibleTasks} allTasks={tasks} projects={projects} onOpen={goTask} onUpdateStatus={api.updateStatus} />}
+      {tab === "tabela" && (
+        <TabelaView
+          T={T} tasks={visibleTasks} allTasks={tasks} projects={projects} team={team} onOpen={goTask}
+          onUpdate={api.updateTask} onCreate={api.createTask}
+          newDefaults={{ responsaveis: currentUser ? [currentUser] : [], projeto_id: filters.projeto !== "todos" && filters.projeto !== "sem" ? Number(filters.projeto) : null }}
+        />
+      )}
+      {tab === "timeline" && <TimelineView T={T} tasks={visibleTasks} allTasks={tasks} projects={projects} onOpen={goTask} onUpdate={api.updateTask} showToast={showToast} />}
       {tab === "calendario" && <CalendarioView T={T} tasks={visibleTasks} onOpen={goTask} />}
       {tab === "pessoa" && <PorPessoaView T={T} tasks={visibleTasks} team={team} currentUser={currentUser} onOpen={goTask} />}
       {tab === "projetos" && <ProjetosView T={T} projects={projects} tasks={tasks} onOpenProject={goProject} onNew={() => setProjectModal(true)} />}

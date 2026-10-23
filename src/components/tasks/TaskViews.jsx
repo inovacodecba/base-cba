@@ -1,18 +1,24 @@
 // Visões extras do módulo Tarefas (10/2026, "estilo Notion"): Tabela e
 // Calendário. Recebem a lista já filtrada pela barra de busca/filtros do
-// Tarefas.jsx e só abrem a página da tarefa ao clicar — nenhuma edição
-// complexa aqui (exceto trocar o status direto na tabela, igual ao Notion).
-import { useState, useMemo } from "react";
-import { ChevronLeft, ChevronRight, ArrowUp, ArrowDown, Table2, CornerDownRight } from "lucide-react";
-import { TASK_STATUS } from "../../constants.js";
+// Tarefas.jsx.
+//
+// Tabela = planilha (16/10/2026, pedido do Rodrigo: "não consigo editar"):
+// cada célula é editável ali mesmo e salva sozinha — texto ao sair do
+// campo (ou Enter), listas/datas na hora. A ordem das linhas fica parada
+// enquanto se edita (senão a linha "pularia" ao mudar o prazo); só reordena
+// ao clicar no cabeçalho de uma coluna.
+import { useState, useMemo, useRef, useEffect } from "react";
+import { ChevronLeft, ChevronRight, ArrowUp, ArrowDown, Table2, CornerDownRight, Maximize2, Plus } from "lucide-react";
+import { TASK_STATUS, TASK_PRIORITY } from "../../constants.js";
 import {
-  COLS, PriorityBadge, CategoryTag, ProjectTag, AvatarStack, ProgressBar, dueInfo, fmtDate, statusColor, priorityOrder,
-  taskProgress, todayIso, EmptyState,
+  COLS, PRIORITIES, PriorityBadge, AvatarStack, TeamMultiSelect, statusColor, priorityColor, priorityOrder, projectColor,
+  todayIso, EmptyState,
 } from "./taskUi.jsx";
 
 // ── Tabela ────────────────────────────────────────────────────────────────
 const SORTERS = {
   titulo: (a, b) => a.titulo.localeCompare(b.titulo, "pt-BR"),
+  descricao: (a, b) => (a.descricao || "~").localeCompare(b.descricao || "~", "pt-BR"),
   status: (a, b) => COLS.indexOf(a.status) - COLS.indexOf(b.status),
   responsaveis: (a, b) => (a.responsaveis?.[0] || "~").localeCompare(b.responsaveis?.[0] || "~", "pt-BR"),
   prazo: (a, b) => (a.prazo || "9999-99-99").localeCompare(b.prazo || "9999-99-99"),
@@ -21,83 +27,150 @@ const SORTERS = {
   categoria: (a, b) => (a.categoria || "~").localeCompare(b.categoria || "~", "pt-BR"),
 };
 
-export function TabelaView({ T, tasks, allTasks, projects, onOpen, onUpdateStatus }) {
-  const [sort, setSort] = useState({ key: "prazo", dir: 1 });
-  const projectsById = useMemo(() => Object.fromEntries(projects.map(p => [p.id, p])), [projects]);
-  const rows = useMemo(() => {
-    const fn = SORTERS[sort.key];
-    return [...tasks].sort((a, b) => fn(a, b, projectsById) * sort.dir || priorityOrder(b) - priorityOrder(a));
-  }, [tasks, sort, projectsById]);
-  const parentTitle = (t) => t.parent_id ? allTasks.find(x => x.id === t.parent_id)?.titulo : null;
+// Célula de texto: edita no lugar, salva no blur/Enter, Esc desfaz.
+function EditText({ T, value, onSave, placeholder, bold, required, list }) {
+  const [v, setV] = useState(value || "");
+  useEffect(() => { setV(value || ""); }, [value]);
+  const commit = () => {
+    const t = v.trim();
+    if (required && !t) { setV(value || ""); return; }
+    if (t !== (value || "")) onSave(t);
+  };
+  return (
+    <input
+      value={v} onChange={e => setV(e.target.value)} onBlur={commit} list={list}
+      onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { setV(value || ""); setTimeout(() => e.target.blur()); } }}
+      placeholder={placeholder} title={v}
+      className="tk-cell"
+      style={{ fontWeight: bold ? 600 : 400, color: T.text }}
+    />
+  );
+}
 
+export function TabelaView({ T, tasks, allTasks, projects, team, onOpen, onUpdate, onCreate, newDefaults }) {
+  const [sort, setSort] = useState({ key: "prazo", dir: 1 });
+  const [novo, setNovo] = useState("");
+  const projectsById = useMemo(() => Object.fromEntries(projects.map(p => [p.id, p])), [projects]);
+  const categoriesUsed = useMemo(() => Array.from(new Set(allTasks.map(t => t.categoria).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR")), [allTasks]);
+
+  // Ordem congelada: recalcula só quando muda a coluna de ordenação ou
+  // entra/sai tarefa da lista — editar uma célula não mexe na posição.
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+  const idsKey = tasks.map(t => t.id).sort().join(",");
+  const order = useMemo(() => {
+    const fn = SORTERS[sort.key];
+    return [...tasksRef.current].sort((a, b) => fn(a, b, projectsById) * sort.dir || priorityOrder(b) - priorityOrder(a)).map(t => t.id);
+  }, [sort, idsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const byId = useMemo(() => Object.fromEntries(tasks.map(t => [t.id, t])), [tasks]);
+  const rows = order.map(id => byId[id]).filter(Boolean);
+  const parentTitle = (t) => t.parent_id ? allTasks.find(x => x.id === t.parent_id)?.titulo : null;
+  const save = (id, patch) => onUpdate(id, patch, { silent: true });
+
+  const addRow = async () => {
+    const titulo = novo.trim();
+    if (!titulo) return;
+    setNovo("");
+    await onCreate({ titulo, descricao: "", prazo: null, categoria: null, prioridade: "media", parent_id: null, ...newDefaults }, { silent: true });
+  };
+
+  const thBase = { textAlign: "left", padding: "9px 8px", fontSize: 10.5, fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: .5, whiteSpace: "nowrap", userSelect: "none", borderBottom: `1px solid ${T.border}`, background: T.th, position: "sticky", top: 0, zIndex: 1 };
   const th = (key, label, w) => (
-    <th
-      onClick={() => setSort(s => ({ key, dir: s.key === key ? -s.dir : 1 }))}
-      style={{ textAlign: "left", padding: "10px 10px", fontSize: 10.5, fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: .5, cursor: "pointer", whiteSpace: "nowrap", width: w, userSelect: "none", borderBottom: `1px solid ${T.border}`, background: T.th }}
-    >
+    <th onClick={() => setSort(s => ({ key, dir: s.key === key ? -s.dir : 1 }))} style={{ ...thBase, cursor: "pointer", width: w }}>
       <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
         {label}
         {sort.key === key && (sort.dir === 1 ? <ArrowUp size={11} /> : <ArrowDown size={11} />)}
       </span>
     </th>
   );
-  const td = { padding: "9px 10px", fontSize: 12.5, color: T.text, borderBottom: `1px solid ${T.borderSoft}`, verticalAlign: "middle" };
-
-  if (tasks.length === 0) return <EmptyState T={T} icon={Table2}>Nenhuma tarefa com esses filtros.</EmptyState>;
+  const td = { padding: "3px 4px", fontSize: 12.5, color: T.text, borderBottom: `1px solid ${T.borderSoft}`, borderRight: `1px solid ${T.borderSoft}`, verticalAlign: "middle" };
+  const cellSel = { className: "tk-cell", style: { color: T.text, cursor: "pointer" } };
 
   return (
-    <div className="tk-view" style={{ background: T.panel, border: `1px solid ${T.border}`, borderRadius: 12, overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
+    <div className="tk-view" style={{ background: T.panel, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "auto", maxHeight: "72vh" }}>
+      <style>{`
+        .tk-cell{width:100%;min-width:0;background:transparent;border:1px solid transparent;border-radius:6px;padding:6px 6px;font-size:12.5px;font-family:inherit;outline:none;transition:background 120ms ease,border-color 120ms ease}
+        .tk-cell:hover{background:${T.panelAlt}}
+        .tk-cell:focus{background:${T.input};border-color:${T.accent}}
+        .tk-cell::placeholder{color:${T.textFaint}}
+        .tk-sheet tr:hover td{background:${T.rowHover}}
+      `}</style>
+      <datalist id="tk-sheet-cat">{categoriesUsed.map(c => <option key={c} value={c} />)}</datalist>
+      <table className="tk-sheet" style={{ width: "100%", borderCollapse: "collapse", minWidth: 1180 }}>
         <thead>
           <tr>
-            {th("titulo", "Tarefa")}
-            {th("status", "Status", 140)}
-            {th("responsaveis", "Responsáveis", 150)}
-            {th("prazo", "Prazo", 100)}
-            {th("prioridade", "Prioridade", 100)}
-            {th("projeto", "Projeto", 150)}
+            <th style={{ ...thBase, width: 34 }} />
+            {th("titulo", "Tarefa", 260)}
+            {th("descricao", "Observação", 260)}
+            {th("status", "Status", 130)}
+            {th("responsaveis", "Responsáveis", 170)}
+            {th("prazo", "Prazo", 130)}
+            {th("prioridade", "Prioridade", 110)}
+            {th("projeto", "Projeto", 170)}
             {th("categoria", "Categoria", 120)}
-            <th style={{ padding: "10px 10px", fontSize: 10.5, fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: .5, width: 110, textAlign: "left", borderBottom: `1px solid ${T.border}`, background: T.th }}>Progresso</th>
           </tr>
         </thead>
         <tbody>
           {rows.map(t => {
-            const due = dueInfo(t.prazo, T, t.status);
-            const prog = taskProgress(t, allTasks);
             const pt = parentTitle(t);
+            const proj = t.projeto_id ? projectsById[t.projeto_id] : null;
             return (
-              <tr key={t.id} className="tk-row" onClick={() => onOpen(t.id)} style={{ cursor: "pointer" }}>
-                <td style={{ ...td, fontWeight: 600, maxWidth: 320 }}>
-                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.titulo}</div>
-                  {pt && <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color: T.textFaint, fontWeight: 500, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}><CornerDownRight size={10} /> {pt}</div>}
+              <tr key={t.id}>
+                <td style={{ ...td, textAlign: "center" }}>
+                  <button onClick={() => onOpen(t.id)} title="Abrir página da tarefa" aria-label={`Abrir ${t.titulo}`} style={{ width: 24, height: 24, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "none", borderRadius: 6, background: "transparent", color: T.textFaint, cursor: "pointer" }}><Maximize2 size={13} /></button>
                 </td>
-                <td style={td} onClick={e => e.stopPropagation()}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <td style={td}>
+                  <EditText T={T} value={t.titulo} required bold onSave={v => save(t.id, { titulo: v })} />
+                  {pt && <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color: T.textFaint, padding: "0 7px 4px", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}><CornerDownRight size={10} /> {pt}</div>}
+                </td>
+                <td style={td}><EditText T={T} value={t.descricao} placeholder="—" onSave={v => save(t.id, { descricao: v })} /></td>
+                <td style={td}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 2, paddingLeft: 6 }}>
                     <span style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor(T, t.status), flexShrink: 0 }} />
-                    <select value={t.status} onChange={e => onUpdateStatus(t.id, e.target.value)} aria-label="Status" style={{ background: "transparent", border: "none", color: T.text, fontSize: 12.5, fontFamily: "inherit", cursor: "pointer", padding: 0 }}>
+                    <select value={t.status} onChange={e => save(t.id, { status: e.target.value })} aria-label="Status" {...cellSel}>
                       {COLS.map(c => <option key={c} value={c}>{TASK_STATUS[c].label}</option>)}
                     </select>
-                  </span>
+                  </div>
                 </td>
                 <td style={td}>
-                  {(t.responsaveis || []).length
-                    ? <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}><AvatarStack T={T} names={t.responsaveis} size={18} /><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 100, fontSize: 11.5 }}>{t.responsaveis.join(", ")}</span></span>
-                    : <span style={{ color: T.textFaint }}>—</span>}
+                  <TeamMultiSelect T={T} team={team} value={t.responsaveis || []} onChange={v => save(t.id, { responsaveis: v })} inp={() => ({ width: "100%", fontSize: 12, padding: "6px 6px", borderRadius: 6, border: "1px solid transparent", background: "transparent", color: T.text, fontFamily: "inherit" })} fixed />
                 </td>
-                <td style={{ ...td, color: t.prazo ? due.color === T.textFaint ? T.text : due.color : T.textFaint, fontWeight: due.days != null && due.days <= 2 ? 700 : 400, whiteSpace: "nowrap" }}>{t.prazo ? fmtDate(t.prazo) : "—"}</td>
-                <td style={td}><PriorityBadge T={T} prioridade={t.prioridade} compact /></td>
-                <td style={td}>{t.projeto_id && projectsById[t.projeto_id] ? <ProjectTag project={projectsById[t.projeto_id]} /> : <span style={{ color: T.textFaint }}>—</span>}</td>
-                <td style={td}>{t.categoria ? <CategoryTag categoria={t.categoria} /> : <span style={{ color: T.textFaint }}>—</span>}</td>
                 <td style={td}>
-                  {prog.total > 0
-                    ? <span style={{ display: "flex", alignItems: "center", gap: 6 }}><ProgressBar T={T} done={prog.done} total={prog.total} color={statusColor(T, "concluido")} height={5} /><span style={{ fontSize: 10.5, color: T.textFaint, whiteSpace: "nowrap" }}>{prog.done}/{prog.total}</span></span>
-                    : <span style={{ color: T.textFaint }}>—</span>}
+                  <input type="date" value={t.prazo || ""} onChange={e => save(t.id, { prazo: e.target.value || null })} aria-label="Prazo" {...cellSel} />
                 </td>
+                <td style={td}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 2, paddingLeft: 6 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 2, background: priorityColor(T, t.prioridade), flexShrink: 0 }} />
+                    <select value={t.prioridade || "media"} onChange={e => save(t.id, { prioridade: e.target.value })} aria-label="Prioridade" {...cellSel}>
+                      {PRIORITIES.map(p => <option key={p} value={p}>{TASK_PRIORITY[p].label}</option>)}
+                    </select>
+                  </div>
+                </td>
+                <td style={td}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 2, paddingLeft: 6 }}>
+                    {proj && <span style={{ width: 8, height: 8, borderRadius: 2, background: projectColor(proj), flexShrink: 0 }} />}
+                    <select value={t.projeto_id || ""} onChange={e => save(t.id, { projeto_id: e.target.value ? Number(e.target.value) : null })} aria-label="Projeto" className="tk-cell" style={{ color: proj ? T.text : T.textFaint, cursor: "pointer" }}>
+                      <option value="">—</option>
+                      {projects.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                    </select>
+                  </div>
+                </td>
+                <td style={td}><EditText T={T} value={t.categoria} placeholder="—" list="tk-sheet-cat" onSave={v => save(t.id, { categoria: v || null })} /></td>
               </tr>
             );
           })}
+          <tr>
+            <td style={{ ...td, textAlign: "center", color: T.textFaint }}><Plus size={14} /></td>
+            <td style={td} colSpan={8}>
+              <input
+                value={novo} onChange={e => setNovo(e.target.value)} onKeyDown={e => { if (e.key === "Enter") addRow(); }} onBlur={addRow}
+                placeholder="Nova tarefa — digite o título e aperte Enter" className="tk-cell" style={{ color: T.text }}
+              />
+            </td>
+          </tr>
         </tbody>
       </table>
+      {tasks.length === 0 && <EmptyState T={T} icon={Table2}>Nenhuma tarefa com esses filtros.</EmptyState>}
     </div>
   );
 }
