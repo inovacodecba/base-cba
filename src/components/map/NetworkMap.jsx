@@ -296,7 +296,7 @@ export function NetworkMap({ T, sb, equipamentos, onAddEquipamento, onRemoveEqui
   };
 
   return (
-    <div ref={wrapRef} className="nm2-wrap" style={{ position: "relative", height: "calc(100dvh - 150px)", minHeight: 520, borderRadius: 16, overflow: "hidden", border: `1px solid ${adding ? T.accent : T.border}`, background: T.input }}>
+    <div ref={wrapRef} className="nm2-wrap" style={{ position: "relative", width: "100%", height: "calc(100dvh - 150px)", minHeight: 520, borderRadius: 16, overflow: "hidden", border: `1px solid ${adding ? T.accent : T.border}`, background: T.input }}>
       <style>{`
         ${satelliteMapCss(T, "nm-map")}
         .nm-map-tooltip{font-size:11px;font-weight:700;padding:3px 7px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.3)}

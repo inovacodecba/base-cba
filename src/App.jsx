@@ -1727,7 +1727,7 @@ export default function App() {
           setTheme={setTheme}
         />
 
-        <div className="content-inner" style={{ maxWidth: 1300, margin: "0 auto", padding: "20px 20px 40px" }}>
+        <div className="content-inner" style={{ width: "100%", maxWidth: 1300, margin: "0 auto", padding: "20px 20px 40px" }}>
           <ErrorBoundary T={T} key={view}>
           {/* Troca de tela com entrada suave (fade + subida curta), cada bloco
               da tela entra um pouquinho depois do anterior — ver .view-enter. */}
