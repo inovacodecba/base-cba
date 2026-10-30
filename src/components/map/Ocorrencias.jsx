@@ -68,7 +68,7 @@ export function OcorrenciaForm({ T, equipamento, onSave, onClose }) {
 }
 
 // Lista das ocorrências de UM equipamento (painel do equipamento selecionado).
-export function OcorrenciasDoEquipamento({ T, lista, onStatus, onNova }) {
+export function OcorrenciasDoEquipamento({ T, lista, onStatus, onNova, onTarefa }) {
   const { sbtn } = makeStyleHelpers(T);
   const abertas = lista.filter(o => o.status === "aberta");
   return (
@@ -87,7 +87,10 @@ export function OcorrenciasDoEquipamento({ T, lista, onStatus, onNova }) {
             {o.descricao && <div style={{ fontSize: 12, color: T.textMuted }}>{o.descricao}</div>}
             <div style={{ fontSize: 10.5, color: T.textFaint }}>{o.criado_por} · {fmtData(o.created_at)}</div>
           </div>
-          <button onClick={() => onStatus(o, "resolvida")} style={{ ...sbtn("#16a34a"), display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0 }}><CheckCircle2 size={12} /> Resolver</button>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
+            <button onClick={() => onStatus(o, "resolvida")} style={{ ...sbtn("#16a34a"), display: "inline-flex", alignItems: "center", gap: 4 }}><CheckCircle2 size={12} /> Resolver</button>
+            {onTarefa && <button onClick={() => onTarefa(o)} title="Cria uma tarefa ligada a este equipamento" style={{ ...sbtn("#8b5cf6"), display: "inline-flex", alignItems: "center", gap: 4 }}><Plus size={12} /> Virar tarefa</button>}
+          </div>
         </div>
       ))}
     </div>

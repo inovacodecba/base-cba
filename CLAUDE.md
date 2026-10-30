@@ -62,7 +62,11 @@ equipamentos de rede, Tarefas, Documentos/Treinamentos, Ponto por QR Code e Banc
 
 ## Mapa (`src/components/map/`)
 
-- Leaflet + satélite Esri, carregado sob demanda (`lazy`). 87 equipamentos em `equipamentos_rede`.
+- Leaflet + satélite Esri, carregado sob demanda (`lazy`). 93 equipamentos em `equipamentos_rede`
+  (base: KMZ do Google My Maps). `dados` = MAC/IP por lado do totem + chip; `categorias` =
+  `veicular`/`materiais`. Mapa v2: `NetworkMap.jsx` (tela), `EquipPanel.jsx` (painel/ficha/form),
+  `mapUtils.js` (ícones, agrupamento, alcance). Camadas liga/desliga salvas no aparelho.
+- `tarefas.equipamento_id` liga tarefa ↔ equipamento (ficha mostra/cria tarefas; tarefa tem "Ver no mapa").
 - Ocorrências (`equipamento_ocorrencias`, RPC `ocorrencia_set_status`): "Sem Amplimax",
   "Totem caído"… abertas/resolvidas; painel embaixo do mapa começa fechado.
 

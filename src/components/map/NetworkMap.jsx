@@ -1,504 +1,471 @@
-// Mapa de Equipamentos de Rede — totens, repetidores Amplimax, impressoras e
-// caixas de baixa, importados do Google My Maps do usuário ("Equipamentos e
-// alcançe do amplimax"). Usa Leaflet + imagens de satélite do Esri World
-// Imagery (gratuito, sem chave de API, sem conta/billing — só atribuição),
-// carregadas ao vivo do provedor a cada acesso. Diferente de embutir um
-// print/tile estático do Google (o que evitamos por direitos autorais e
-// pelos termos de uso do Google Maps), aqui o mapa é sempre buscado na hora,
-// exatamente como qualquer site que mostra "o mapa de verdade" deve fazer —
-// só os pinos (nome, tipo, posição) são nossos.
-import { useState, useMemo, useRef, useEffect } from "react";
-import { X, Plus, ExternalLink, MapPin, Search, Download, FileSpreadsheet } from "lucide-react";
+// Mapa de Equipamentos v2 (30/10/2026) — pedido do Rodrigo: "um mapa
+// fluido, fácil de entender, com funcionalidades úteis", usando como base o
+// KMZ do Google My Maps ("Equipamentos e alcançe do amplimax"), que agora
+// traz MAC/IP de cada lado dos totens.
+//
+// O que mudou em relação ao v1:
+//  • Mapa ocupa a tela; busca e filtros flutuam em cima; painel ao lado
+//    (desktop) ou gaveta embaixo (celular) com visão geral, ocorrências e a
+//    ficha do equipamento selecionado.
+//  • Ícone próprio por tipo (totem, Amplimax, impressora, caixa de baixa) e
+//    agrupamento com contador quando os pontos ficam colados de longe.
+//  • Camadas que liga/desliga ("pra deixar mais limpo"): nomes, agrupar,
+//    alcance do Amplimax (raio ajustável), ligação totem → Amplimax e
+//    destaque de ocorrências. Ficam salvas no aparelho.
+//  • Filtro por categoria do totem (Monitoramento veicular / Movimentação
+//    de materiais).
+//  • Ficha com MAC/IP (copia com um toque), Amplimax mais próximo e a
+//    distância, ocorrências e as tarefas ligadas ao equipamento.
+//
+// Satélite: Esri World Imagery ao vivo (sem chave, só atribuição) — ver
+// satelliteMap.js. Leaflet é carregado sob demanda (lazy, no App.jsx).
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { Search, X, Layers, Plus, Crosshair, Download, Tags, ChevronUp, ChevronDown } from "lucide-react";
 import L from "leaflet";
-import { Overlay } from "../common.jsx";
 import { makeStyleHelpers } from "../../theme.js";
 import { EQUIP_TIPO } from "../../constants.js";
 import { dlCSV } from "../../utils.js";
-import { OcorrenciaForm, OcorrenciasDoEquipamento, OcorrenciasPanel } from "./Ocorrencias.jsx";
-import { createSatelliteMap, satelliteMapCss, declutterLabels, PLANT_CENTER } from "./satelliteMap.js";
+import { OcorrenciaForm } from "./Ocorrencias.jsx";
+import { createSatelliteMap, satelliteMapCss, declutterLabels, PLANT_CENTER, SAT_MAX_ZOOM } from "./satelliteMap.js";
+import { TIPO_ICON, clusterize, nearestAmplimax, loadLayers, saveLayers, loadRaio, saveRaio, CATEGORIAS, LAYERS_DEFAULT } from "./mapUtils.js";
+import { SidePanel, EquipForm } from "./EquipPanel.jsx";
 
 const TIPO_ORDER = ["totem", "amplimax", "impressora", "caixa_baixa", "outro"];
-
-// Direção do rótulo por tipo de equipamento — um totem e o Amplimax que
-// atende ele costumam ficar a poucos metros um do outro (às vezes menos de
-// 5m, por design da instalação), próximos demais pra qualquer zoom separar
-// os dois na tela. Em vez de os dois brigarem pelo mesmo lado do pino (o
-// que fazia um dos dois nunca aparecer, mesmo no zoom máximo), cada tipo
-// estica o rótulo pra um lado diferente — assim, mesmo colados no mapa,
-// dá pra ler o nome dos dois ao mesmo tempo na maioria dos casos.
 const TIPO_LABEL_DIR = { totem: "right", amplimax: "left", impressora: "top", caixa_baixa: "bottom", outro: "right" };
+const CLUSTER_PX = 38;
+const keyOf = (e) => (e.id != null ? `id${e.id}` : `n${e.name}|${e.lat}|${e.lng}`);
 
-// A partir de qual zoom os rótulos com o nome do equipamento aparecem — de
-// longe só as cores, ao aproximar já dá pra ler o nome. Com ~87 pontos
-// (alguns bem próximos entre si) mostrar tudo sempre vira uma poluição
-// ilegível, por isso o rótulo só entra em jogo perto o suficiente (ver
-// `zoomThreshold` em `declutterLabels`, satelliteMap.js).
-//
-// BUG corrigido (2x): esse valor já foi um número fixo (18, depois 16)
-// chutado com base no tamanho físico da planta — e as duas vezes ficou
-// ERRADO, porque o zoom em que o mapa efetivamente abre (resultado de
-// `fitBounds` enquadrando os ~87 pontos, ver efeito abaixo) depende da
-// dispersão real dos pontos e do tamanho do container, não de uma conta de
-// régua. Nas duas vezes o threshold acabou ficando ACIMA do zoom de
-// abertura, e nenhum rótulo aparecia na tela inicial — exatamente o sintoma
-// reportado duas vezes.
-//
-// Em vez de adivinhar mais um número fixo, o threshold agora É o próprio
-// zoom que `fitBounds` calcula na abertura (guardado em `labelThresholdRef`
-// assim que o mapa enquadra os pontos, `null` até lá = sem corte, não
-// esconde nada por falta de referência). Isso garante por construção que a
-// tela inicial já mostra os rótulos que não colidem, e continua se ajustando
-// sozinho se o conjunto de equipamentos mudar (mais pontos, planta maior
-// etc.) sem precisar chutar de novo.
+const LAYER_INFO = [
+  ["nomes", "Nomes dos equipamentos", "Mostra o nome ao lado de cada ponto (de perto)."],
+  ["agrupar", "Agrupar pontos próximos", "De longe, junta os pontos colados num círculo com o total."],
+  ["alcance", "Alcance do Amplimax", "Círculo de cobertura em volta de cada Amplimax."],
+  ["ligacoes", "Ligação totem → Amplimax", "Linha até o Amplimax mais próximo (verde dentro do alcance, laranja fora)."],
+  ["ocorrencias", "Destacar ocorrências", "Pisca em vermelho quem tem ocorrência aberta."],
+];
 
-function markerStyle(color, selected, alerta = false) {
-  return {
-    radius: selected ? 10 : alerta ? 9 : 7,
-    color: alerta ? "#ef4444" : "#fff",
-    weight: selected ? 3 : alerta ? 3.5 : 1.5,
-    fillColor: color,
-    fillOpacity: 1,
-  };
-}
-
-export function NetworkMap({ T, sb, equipamentos, onAddEquipamento, onRemoveEquipamento, showToast }) {
-  const { btn, ghost, inp } = makeStyleHelpers(T);
+export function NetworkMap({ T, sb, equipamentos, onAddEquipamento, onRemoveEquipamento, onUpdateEquipamento, onOpenCadastros, showToast, tasks = [], onCreateTask, onOpenTask, currentUser, focusEquip }) {
+  const { inp, ghost } = makeStyleHelpers(T);
+  const wrapRef = useRef(null);
   const mapElRef = useRef(null);
   const mapRef = useRef(null);
-  const markersRef = useRef(new Map()); // _i -> L.CircleMarker
-  const addingRef = useRef(null); // mirror de `adding` para o listener de clique do mapa
-  const recomputeLabelsRef = useRef(() => {}); // sempre aponta pra versão mais atual (fecha sobre `selected`)
-  const labelThresholdRef = useRef(null); // zoom da tela inicial (setado por fitBounds) — ver comentário acima
+  const pinsLayerRef = useRef(null);
+  const overlayLayerRef = useRef(null);
+  const markersRef = useRef(new Map());
+  const shownRef = useRef(new Set()); // o que já estava na tela — só o que é novo faz a animação de entrada
+  const addingRef = useRef(null);
+  const labelZoomRef = useRef(null);
+  const [zoom, setZoom] = useState(16);
 
-  const [tiposAtivos, setTiposAtivos] = useState(() => new Set(TIPO_ORDER));
-  const [areaFiltro, setAreaFiltro] = useState("Todas");
-  const [selected, setSelected] = useState(null); // índice em `equipamentos`
-  const [adding, setAdding] = useState(null); // { name, tipo, area } aguardando clique no mapa
-  const [addForm, setAddForm] = useState({ name: "", tipo: "amplimax", area: "" });
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [showAreaSummary, setShowAreaSummary] = useState(false);
+  const [layers, setLayersState] = useState(loadLayers);
+  const setLayer = (k, v) => setLayersState(p => { const n = { ...p, [k]: v }; saveLayers(n); return n; });
+  const [raio, setRaioState] = useState(loadRaio);
+  const setRaio = (r) => { setRaioState(r); saveRaio(r); };
+  const [showLayers, setShowLayers] = useState(false);
+
+  const [tipos, setTipos] = useState(() => new Set(TIPO_ORDER));
+  const [cat, setCat] = useState("todas"); // todas | veicular | materiais
+  const [selKey, setSelKey] = useState(null);
   const [search, setSearch] = useState("");
-  // Controla a visibilidade do dropdown de resultados de forma independente
-  // do foco real do DOM: depois de escolher um resultado o campo continua
-  // focado (não perde o foco do navegador), então um "onFocus" novo nunca
-  // dispararia de novo — se a visibilidade dependesse só de onFocus/onBlur,
-  // o dropdown ficaria travado fechado na próxima busca. Por isso reabre
-  // explicitamente a cada tecla digitada (onChange), não só ao focar.
   const [searchOpen, setSearchOpen] = useState(false);
+  const [adding, setAdding] = useState(null); // { ...dados } ou { id, move: true }
+  const [form, setForm] = useState(null); // { modo: "novo" | "editar", equip? }
+  const [sheet, setSheet] = useState("min"); // celular: min | mid | max
+  const [panelOpen, setPanelOpen] = useState(true); // desktop
 
-  // ── Ocorrências (ver Ocorrencias.jsx) ──
+  // ── ocorrências ──
   const [ocorrencias, setOcorrencias] = useState([]);
-  const [destacar, setDestacar] = useState(false); // realça no mapa quem tem ocorrência aberta
-  const [formOcorr, setFormOcorr] = useState(null); // equipamento para o qual está registrando
-  const carregarOcorrencias = () => sb && sb("equipamento_ocorrencias?order=created_at.desc&limit=500").then(r => setOcorrencias(r || [])).catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { carregarOcorrencias(); }, []);
-  const equipById = useMemo(() => new Map(equipamentos.filter(e => e.id != null).map(e => [e.id, e])), [equipamentos]);
+  const [formOcorr, setFormOcorr] = useState(null);
+  const carregarOcorrencias = useCallback(() => { if (sb) sb("equipamento_ocorrencias?order=created_at.desc&limit=500").then(r => setOcorrencias(r || [])).catch(() => {}); }, [sb]);
+  useEffect(() => { carregarOcorrencias(); }, [carregarOcorrencias]);
   const comAberta = useMemo(() => new Set(ocorrencias.filter(o => o.status === "aberta").map(o => o.equipamento_id)), [ocorrencias]);
   const salvarOcorrencia = async (dados) => {
-    try {
-      await sb("equipamento_ocorrencias", "POST", dados);
-      showToast && showToast("Ocorrência registrada");
-      carregarOcorrencias();
-      return true;
-    } catch (e) {
-      showToast && showToast(`Erro ao registrar: ${e.message}`, "err");
-      return false;
-    }
+    try { await sb("equipamento_ocorrencias", "POST", dados); showToast?.("Ocorrência registrada"); carregarOcorrencias(); return true; }
+    catch (e) { showToast?.(`Erro ao registrar: ${e.message}`, "err"); return false; }
   };
   const mudarStatus = async (o, status) => {
-    try {
-      await sb("rpc/ocorrencia_set_status", "POST", { p_id: o.id, p_status: status });
-      showToast && showToast(status === "resolvida" ? "Marcada como resolvida" : "Ocorrência reaberta");
-      carregarOcorrencias();
-    } catch (e) {
-      showToast && showToast(`Erro: ${e.message}`, "err");
-    }
+    try { await sb("rpc/ocorrencia_set_status", "POST", { p_id: o.id, p_status: status }); showToast?.(status === "resolvida" ? "Marcada como resolvida" : "Ocorrência reaberta"); carregarOcorrencias(); }
+    catch (e) { showToast?.(`Erro: ${e.message}`, "err"); }
   };
 
-  const areas = useMemo(() => [...new Set(equipamentos.map(e => e.area))].sort(), [equipamentos]);
-
-  // Quantidade de cada tipo de equipamento por área — respondendo direto
-  // "quantas impressoras tem na Fundição 1" sem precisar contar pino por
-  // pino no mapa (útil justamente quando os rótulos ficam apertados demais
-  // pra ler todos de uma vez num cluster denso).
-  const areaSummary = useMemo(() => {
-    const byArea = new Map();
-    equipamentos.forEach(e => {
-      if (!byArea.has(e.area)) byArea.set(e.area, {});
-      const counts = byArea.get(e.area);
-      counts[e.tipo] = (counts[e.tipo] || 0) + 1;
-    });
-    return [...byArea.entries()]
-      .map(([area, counts]) => ({ area, counts, total: Object.values(counts).reduce((a, b) => a + b, 0) }))
-      .sort((a, b) => a.area.localeCompare(b.area));
-  }, [equipamentos]);
-  const tiposPresentes = useMemo(() => TIPO_ORDER.filter(t => equipamentos.some(e => e.tipo === t)), [equipamentos]);
-
-  const visible = equipamentos
-    .map((e, i) => ({ ...e, _i: i }))
-    .filter(e => tiposAtivos.has(e.tipo) && (areaFiltro === "Todas" || e.area === areaFiltro));
-
-  // Busca por nome — varre TODOS os equipamentos (ignora os filtros de
-  // tipo/área ativos), porque o objetivo é achar um ponto específico entre
-  // os ~87 mesmo que ele esteja escondido pelo filtro no momento.
+  // ── dados derivados ──
+  const byKey = useMemo(() => new Map(equipamentos.map(e => [keyOf(e), e])), [equipamentos]);
+  const sel = selKey ? byKey.get(selKey) || null : null;
+  const visible = useMemo(() => equipamentos.filter(e =>
+    tipos.has(e.tipo in EQUIP_TIPO ? e.tipo : "outro") &&
+    (cat === "todas" || (e.tipo === "totem" && (e.categorias || []).includes(cat)))
+  ), [equipamentos, tipos, cat]);
+  const nearest = useMemo(() => nearestAmplimax(equipamentos, keyOf), [equipamentos]);
+  const foraDoAlcance = useMemo(() => equipamentos.filter(e => e.tipo === "totem" && (nearest.get(keyOf(e))?.d ?? Infinity) > raio), [equipamentos, nearest, raio]);
   const searchMatches = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return [];
-    return equipamentos
-      .map((e, i) => ({ ...e, _i: i }))
-      .filter(e => e.name.toLowerCase().includes(q) || e.area.toLowerCase().includes(q))
-      .slice(0, 8);
+    return equipamentos.filter(e => {
+      const macs = (e.dados?.lados || []).map(l => `${l.mac || ""} ${l.ip || ""}`).join(" ");
+      return `${e.name} ${e.area} ${macs}`.toLowerCase().includes(q);
+    }).slice(0, 8);
   }, [search, equipamentos]);
 
-  const toggleTipo = tipo => setTiposAtivos(p => {
-    const next = new Set(p);
-    next.has(tipo) ? next.delete(tipo) : next.add(tipo);
-    return next;
-  });
+  const isMobile = () => window.matchMedia?.("(max-width: 760px)").matches;
 
-  // Seleciona um resultado da busca: garante que ele fica visível (liga o
-  // tipo dele se estava desmarcado, tira o filtro de área se ele não bater),
-  // dá um "voo" até a posição já num zoom que mostra o rótulo, e seleciona —
-  // mesmo comportamento de clicar direto no pino.
-  const focusEquipamento = e => {
-    setTiposAtivos(p => (p.has(e.tipo) ? p : new Set(p).add(e.tipo)));
-    setAreaFiltro(prev => (prev === "Todas" || prev === e.area ? prev : "Todas"));
-    setSelected(e._i);
-    setSearch("");
-    setSearchOpen(false);
+  const select = useCallback((e, { fly = true } = {}) => {
+    if (!e) { setSelKey(null); return; }
+    setSelKey(keyOf(e));
+    setTipos(p => (p.has(e.tipo) ? p : new Set(p).add(e.tipo)));
+    if (cat !== "todas" && !(e.categorias || []).includes(cat)) setCat("todas");
+    if (isMobile()) setSheet("mid"); else setPanelOpen(true);
     const map = mapRef.current;
-    if (map) map.flyTo([e.lat, e.lng], Math.max(map.getZoom(), labelThresholdRef.current ?? map.getZoom()), { duration: 0.6 });
-  };
-
-  const focarPorEquip = (e) => {
-    const i = equipamentos.findIndex(x => x.id === e.id);
-    if (i >= 0) {
-      focusEquipamento({ ...equipamentos[i], _i: i });
-      mapElRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (map && fly) {
+      // Centraliza na parte do mapa que fica livre: à esquerda do painel
+      // (desktop) ou acima da gaveta (celular).
+      const z = Math.max(map.getZoom(), SAT_MAX_ZOOM - 1);
+      const mob = isMobile();
+      const off = mob ? L.point(0, map.getSize().y * 0.22) : L.point(196, 0);
+      const alvo = map.unproject(map.project([e.lat, e.lng], z).add(off), z);
+      map.flyTo(alvo, z, { duration: 0.7 });
     }
-  };
+  }, [cat]);
 
-  const exportCSV = () => {
-    const rows = [
-      ["Nome", "Tipo", "Área", "Latitude", "Longitude"],
-      ...visible.map(e => [e.name, (EQUIP_TIPO[e.tipo] || EQUIP_TIPO.outro).label, e.area, e.lat, e.lng]),
-    ];
-    dlCSV(`equipamentos_rede_cba_${Date.now()}.csv`, rows);
-    showToast && showToast(`${visible.length} equipamento(s) exportado(s)`);
-  };
-
-  // Inicializa o mapa uma única vez.
+  // Vindo de uma tarefa ("Ver no mapa"): seleciona e voa até o equipamento.
   useEffect(() => {
-    const map = createSatelliteMap(mapElRef.current, T);
-    map.setView(PLANT_CENTER, 16);
-    map.on("click", e => {
-      if (!addingRef.current) return;
-      onAddEquipamento({ ...addingRef.current, lat: e.latlng.lat, lng: e.latlng.lng });
-      addingRef.current = null;
-      setAdding(null);
-    });
-    // Rótulos só aparecem de perto, e só quando não colidem com outro já
-    // mostrado — reavalia a cada zoom (a distância em pixels entre dois
-    // pontos muda com o zoom, então quem cabia pode deixar de caber e vice-versa).
-    map.on("zoomend", () => recomputeLabelsRef.current());
-    mapRef.current = map;
+    if (!focusEquip?.id) return;
+    const e = equipamentos.find(x => x.id === focusEquip.id);
+    if (e) setTimeout(() => select(e), 350);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusEquip, equipamentos.length]);
 
-    // O Leaflet só mede o tamanho do container na hora de inicializar. Se o
-    // layout ainda não tiver estabilizado nesse momento (flex, fontes
-    // carregando) ou se o container mudar de tamanho depois por qualquer
-    // motivo (barra de botões acima ganhando/perdendo altura, sidebar
-    // recolhendo, rotação do celular), o mapa guarda um tamanho interno
-    // desatualizado — os tiles ficam cortados ou vazam pra fora dos cantos
-    // arredondados ("dimensão estranha, comendo borda"). Um ResizeObserver
-    // corrige isso sempre que o tamanho real do elemento mudar de verdade,
-    // não só no resize da janela inteira (que é o único caso que o listener
-    // antigo cobria).
+  // ── mapa: cria uma vez ──
+  useEffect(() => {
+    const map = createSatelliteMap(mapElRef.current, T, { zoomControl: false });
+    L.control.zoom({ position: "bottomleft" }).addTo(map);
+    map.setView(PLANT_CENTER, 16);
+    pinsLayerRef.current = L.layerGroup().addTo(map);
+    overlayLayerRef.current = L.layerGroup().addTo(map);
+    map.on("click", ev => {
+      const a = addingRef.current;
+      if (a) {
+        if (a.move) onUpdateEquipamento?.(a.id, { lat: ev.latlng.lat, lng: ev.latlng.lng });
+        else onAddEquipamento({ ...a, lat: ev.latlng.lat, lng: ev.latlng.lng });
+        addingRef.current = null;
+        setAdding(null);
+        return;
+      }
+      setSelKey(null);
+    });
+    map.on("zoomend", () => setZoom(map.getZoom()));
+    mapRef.current = map;
     const ro = new ResizeObserver(() => map.invalidateSize());
     ro.observe(mapElRef.current);
-    const onResize = () => map.invalidateSize();
-    window.addEventListener("resize", onResize);
     const raf = requestAnimationFrame(() => map.invalidateSize());
-    return () => {
-      ro.disconnect();
-      window.removeEventListener("resize", onResize);
-      cancelAnimationFrame(raf);
-      map.remove();
-      mapRef.current = null;
-    };
+    return () => { ro.disconnect(); cancelAnimationFrame(raf); map.remove(); mapRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Enquadra todos os equipamentos e trava a navegação nessa região — não dá
-  // pra "se perder" arrastando o mapa pro resto do mundo, nem dar zoom-out
-  // além do necessário pra ver a planta inteira.
+  // Enquadra a planta toda — descontando o que fica coberto pela busca (em
+  // cima), pelo painel (direita, desktop) ou pela gaveta (embaixo, celular).
+  const fitPad = useCallback(() => (isMobile()
+    ? { paddingTopLeft: [24, 110], paddingBottomRight: [24, 96] }
+    : { paddingTopLeft: [40, 100], paddingBottomRight: [panelOpen ? 400 : 70, 40] }), [panelOpen]);
+  const recentrar = useCallback(() => {
+    const map = mapRef.current;
+    if (!map || !equipamentos.length) return;
+    const b = L.latLngBounds(equipamentos.map(e => [e.lat, e.lng]));
+    map.flyToBounds(b, { ...fitPad(), duration: 0.6 });
+  }, [equipamentos, fitPad]);
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || equipamentos.length === 0) return;
-    const bounds = L.latLngBounds(equipamentos.map(e => [e.lat, e.lng]));
-    map.fitBounds(bounds, { padding: [32, 32] });
-    // Zoom em que a tela abre de fato — vira a referência pro corte de
-    // rótulos (ver comentário de `labelThresholdRef` acima): nunca fica
-    // "impossível de alcançar" porque é medido, não chutado.
-    labelThresholdRef.current = map.getZoom();
-    const lockedBounds = bounds.pad(0.6);
-    map.setMaxBounds(lockedBounds);
+    if (!map || !equipamentos.length) return;
+    const b = L.latLngBounds(equipamentos.map(e => [e.lat, e.lng]));
+    map.fitBounds(b, { ...fitPad(), animate: false });
+    labelZoomRef.current = Math.min(map.getZoom() + 1, SAT_MAX_ZOOM);
+    map.setMaxBounds(b.pad(0.8));
     map.setMinZoom(Math.max(13, map.getZoom() - 2));
+    setZoom(map.getZoom());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [equipamentos.length]);
 
-  // Sincroniza os marcadores com `visible` (filtros + seleção).
+  // ── pinos + agrupamento ──
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    const seen = new Set();
-    visible.forEach(e => {
-      seen.add(e._i);
-      const info = EQUIP_TIPO[e.tipo] || EQUIP_TIPO.outro;
-      const isSelected = selected === e._i;
-      const alerta = destacar && comAberta.has(e.id);
-      let marker = markersRef.current.get(e._i);
-      if (!marker) {
-        marker = L.circleMarker([e.lat, e.lng], markerStyle(info.color, isSelected, alerta));
-        marker.on("click", ev => { L.DomEvent.stopPropagation(ev); setSelected(e._i); });
-        // Tooltip permanente (não reage a hover — quem abre/fecha é a gente,
-        // via recomputeLabels, pra evitar textos sobrepostos em clusters densos).
-        // Direção fixa por tipo (ver `TIPO_LABEL_DIR`) — não muda depois de
-        // criado porque o tipo do equipamento não muda.
-        marker.bindTooltip(e.name, { permanent: true, direction: TIPO_LABEL_DIR[e.tipo] || "right", offset: [8, 0], className: "nm-map-tooltip" });
-        marker.addTo(map);
-        markersRef.current.set(e._i, marker);
+    const map = mapRef.current, layer = pinsLayerRef.current;
+    if (!map || !layer) return;
+    layer.clearLayers();
+    markersRef.current = new Map();
+    const alerta = (e) => layers.ocorrencias && comAberta.has(e.id);
+    const fora = (e) => layers.alcance && e.tipo === "totem" && (nearest.get(keyOf(e))?.d ?? Infinity) > raio;
+    const agrupar = layers.agrupar && zoom < SAT_MAX_ZOOM;
+    const soltos = visible.filter(e => keyOf(e) === selKey);
+    const resto = visible.filter(e => keyOf(e) !== selKey);
+    const groups = agrupar ? clusterize(map, resto, CLUSTER_PX) : resto.map(e => [e]);
+    soltos.forEach(e => groups.push([e]));
+    const antes = shownRef.current, agora = new Set();
+    const novo = (id) => { agora.add(id); return antes.has(id) ? "" : " in"; };
+
+    groups.forEach(g => {
+      if (g.length === 1) {
+        const e = g[0], k = keyOf(e);
+        const info = EQUIP_TIPO[e.tipo] || EQUIP_TIPO.outro;
+        const cls = ["nm2-pin" + novo(k), k === selKey ? "sel" : "", alerta(e) ? "alert" : "", fora(e) ? "far" : ""].join(" ");
+        const m = L.marker([e.lat, e.lng], {
+          icon: L.divIcon({ className: "", html: `<div class="${cls}" style="--c:${info.color}">${TIPO_ICON[e.tipo] || TIPO_ICON.outro}</div>`, iconSize: [30, 30], iconAnchor: [15, 15] }),
+          riseOnHover: true, zIndexOffset: k === selKey ? 1000 : alerta(e) ? 500 : 0,
+        });
+        m.on("click", ev => { L.DomEvent.stopPropagation(ev); select(e, { fly: false }); });
+        m.bindTooltip(e.name, { permanent: true, direction: TIPO_LABEL_DIR[e.tipo] || "right", offset: [12, 0], className: "nm-map-tooltip" });
+        m.addTo(layer);
+        markersRef.current.set(k, m);
       } else {
-        marker.setStyle(markerStyle(info.color, isSelected, alerta));
+        const counts = {};
+        g.forEach(e => { counts[e.tipo] = (counts[e.tipo] || 0) + 1; });
+        const dots = Object.entries(counts).map(([t, n]) => `<i style="background:${(EQUIP_TIPO[t] || EQUIP_TIPO.outro).color}" title="${n}"></i>`).join("");
+        const temAlerta = g.some(alerta);
+        const size = g.length >= 10 ? 46 : 40;
+        const lat = g.reduce((s, e) => s + e.lat, 0) / g.length, lng = g.reduce((s, e) => s + e.lng, 0) / g.length;
+        const m = L.marker([lat, lng], {
+          icon: L.divIcon({ className: "", html: `<div class="nm2-cluster${novo("c" + g.map(keyOf).sort().join(","))}${temAlerta ? " alert" : ""}" style="width:${size}px;height:${size}px"><b>${g.length}</b><span>${dots}</span></div>`, iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
+          zIndexOffset: 200,
+        });
+        m.on("click", ev => {
+          L.DomEvent.stopPropagation(ev);
+          const b = L.latLngBounds(g.map(e => [e.lat, e.lng]));
+          const alvo = Math.min(SAT_MAX_ZOOM, map.getZoom() + 3);
+          const pad = fitPad();
+          map.flyToBounds(b, { ...pad, maxZoom: alvo, duration: 0.6 });
+        });
+        m.addTo(layer);
       }
     });
-    // remove marcadores que saíram do filtro
-    for (const [i, marker] of markersRef.current) {
-      if (!seen.has(i)) { marker.remove(); markersRef.current.delete(i); }
+
+    shownRef.current = agora;
+    if (layers.nomes) declutterLabels(map, markersRef.current, { selectedKey: selKey, zoomThreshold: labelZoomRef.current });
+    else markersRef.current.forEach((m, k) => { if (k === selKey) m.openTooltip(); else m.closeTooltip(); });
+  }, [visible, selKey, zoom, layers, comAberta, nearest, raio, select, fitPad]);
+
+  // ── alcance e ligações ──
+  useEffect(() => {
+    const layer = overlayLayerRef.current;
+    if (!layer) return;
+    layer.clearLayers();
+    if (layers.alcance) {
+      equipamentos.filter(e => e.tipo === "amplimax").forEach(a => {
+        L.circle([a.lat, a.lng], { radius: raio, color: "#3b82f6", weight: 1.5, opacity: .7, dashArray: "4 4", fillColor: "#3b82f6", fillOpacity: .08, interactive: false }).addTo(layer);
+      });
     }
+    if (layers.ligacoes) {
+      visible.filter(e => e.tipo === "totem").forEach(e => {
+        const n = nearest.get(keyOf(e));
+        if (!n) return;
+        const ok = n.d <= raio;
+        L.polyline([[e.lat, e.lng], [n.amp.lat, n.amp.lng]], { color: ok ? "#22c55e" : "#f97316", weight: 2, opacity: .9, dashArray: ok ? null : "5 5", interactive: false }).addTo(layer);
+      });
+    }
+  }, [layers.alcance, layers.ligacoes, raio, equipamentos, visible, nearest]);
 
-    // Rótulos sem sobreposição: abaixo do zoom mínimo nenhum aparece; daí pra
-    // cima, o selecionado tem prioridade e os demais só entram se não
-    // colidirem (em pixels de tela) com um já aceito.
-    recomputeLabelsRef.current = () => declutterLabels(map, markersRef.current, { selectedKey: selected, zoomThreshold: labelThresholdRef.current });
-    recomputeLabelsRef.current();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible.map(e => `${e._i}:${e.tipo}`).join(","), selected, destacar, [...comAberta].join(",")]);
-
-  // Cursor de "posicionando" e sincronização da ref usada pelo listener de clique.
   useEffect(() => {
     addingRef.current = adding;
-    const el = mapElRef.current;
-    if (el) el.style.cursor = adding ? "crosshair" : "";
+    if (mapElRef.current) mapElRef.current.style.cursor = adding ? "crosshair" : "";
   }, [adding]);
 
-  const startAdd = () => {
-    if (!addForm.name.trim() || !addForm.area.trim()) return;
-    setAdding({ name: addForm.name.trim(), tipo: addForm.tipo, area: addForm.area.trim() });
-    setShowAddForm(false);
+  const toggleTipo = (t) => setTipos(p => { const n = new Set(p); if (n.has(t)) n.delete(t); else n.add(t); return n; });
+
+  const exportCSV = () => {
+    const rows = [["Nome", "Tipo", "Área", "Categorias", "Lado A MAC", "Lado A IP", "Lado B MAC", "Lado B IP", "Chip", "Latitude", "Longitude"],
+      ...visible.map(e => {
+        const ld = (l) => (e.dados?.lados || []).find(x => x.lado === l) || {};
+        return [e.name, (EQUIP_TIPO[e.tipo] || EQUIP_TIPO.outro).label, e.area, (e.categorias || []).map(c => CATEGORIAS[c]?.short).join(" + "), ld("A").mac || "", ld("A").ip || "", ld("B").mac || "", ld("B").ip || "", e.dados?.chip || "", e.lat, e.lng];
+      })];
+    dlCSV(`equipamentos_rede_cba_${Date.now()}.csv`, rows);
+    showToast?.(`${visible.length} equipamento(s) exportado(s)`);
   };
 
-  const sel = selected != null ? equipamentos[selected] : null;
+  const camadasAtivas = Object.entries(layers).filter(([k, v]) => v !== LAYERS_DEFAULT[k]).length;
+  const tiposPresentes = TIPO_ORDER.filter(t => equipamentos.some(e => e.tipo === t));
+  const chip = (on, color) => ({
+    display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, whiteSpace: "nowrap",
+    border: `1px solid ${on ? color : "rgba(255,255,255,.18)"}`, background: on ? `${color}` : "rgba(15,17,26,.72)", color: on ? "#fff" : "#cbd5e1",
+    backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", boxShadow: "0 2px 8px rgba(0,0,0,.25)", transition: "background 160ms ease,border-color 160ms ease,transform 160ms ease",
+  });
+  const fab = { width: 40, height: 40, borderRadius: 12, border: "1px solid rgba(255,255,255,.18)", background: "rgba(15,17,26,.78)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", boxShadow: "0 4px 14px rgba(0,0,0,.3)", position: "relative" };
+
+  const panelProps = {
+    T, equipamentos, visible, sel, keyOf, select, nearest, raio, layers, foraDoAlcance, comAberta, ocorrencias, mudarStatus,
+    onNovaOcorrencia: (e) => setFormOcorr(e), tasks, onCreateTask, onOpenTask, currentUser, showToast,
+    onEdit: (e) => setForm({ modo: "editar", equip: e }),
+    onMove: (e) => { setAdding({ id: e.id, move: true, name: e.name }); showToast?.("Toque no mapa na posição nova", "info"); },
+    onRemove: (e) => { onRemoveEquipamento(e.id, e.name); setSelKey(null); },
+    onClose: () => setSelKey(null),
+    onExport: exportCSV,
+  };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <div ref={wrapRef} className="nm2-wrap" style={{ position: "relative", height: "calc(100dvh - 150px)", minHeight: 520, borderRadius: 16, overflow: "hidden", border: `1px solid ${adding ? T.accent : T.border}`, background: T.input }}>
       <style>{`
         ${satelliteMapCss(T, "nm-map")}
-        @media (max-width:640px){ .nm-map-canvas{ height:460px!important; } }
+        .nm-map-tooltip{font-size:11px;font-weight:700;padding:3px 7px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+        .nm2-pin{width:30px;height:30px;border-radius:50%;background:var(--c);border:2.5px solid #fff;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,.45);transition:transform 200ms cubic-bezier(.34,1.56,.64,1);cursor:pointer;position:relative}
+        .nm2-pin.in,.nm2-cluster.in{animation:nm2-in 320ms cubic-bezier(.34,1.56,.64,1) both}
+        .nm2-pin:hover{transform:scale(1.15)}
+        .nm2-pin.sel{transform:scale(1.3);box-shadow:0 0 0 4px rgba(255,255,255,.45),0 6px 18px rgba(0,0,0,.5)}
+        .nm2-pin.far{border-color:#f97316}
+        .nm2-pin.alert::after{content:"";position:absolute;inset:-7px;border-radius:50%;border:3px solid #ef4444;animation:nm2-pulse 1.4s ease-out infinite}
+        .nm2-cluster{border-radius:50%;background:rgba(15,17,26,.88);border:2.5px solid #fff;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,.5);cursor:pointer;transition:transform 180ms ease;position:relative}
+        .nm2-cluster:hover{transform:scale(1.12)}
+        .nm2-cluster b{font-size:14px;line-height:1}
+        .nm2-cluster span{display:flex;gap:2px;margin-top:3px}
+        .nm2-cluster i{width:6px;height:6px;border-radius:50%}
+        .nm2-cluster.alert::after{content:"";position:absolute;inset:-7px;border-radius:50%;border:3px solid #ef4444;animation:nm2-pulse 1.4s ease-out infinite}
+        @keyframes nm2-in{from{opacity:0;transform:scale(.4)}to{opacity:1}}
+        @keyframes nm2-pulse{0%{opacity:.9;transform:scale(.85)}100%{opacity:0;transform:scale(1.5)}}
+        .nm2-top{position:absolute;top:12px;left:12px;right:64px;z-index:600;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+        .nm2-top>*{pointer-events:auto}
+        .nm2-chips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+        .nm2-chips::-webkit-scrollbar{display:none}
+        .nm2-panel{position:absolute;top:12px;right:12px;bottom:12px;width:360px;z-index:650;background:${T.panel};border:1px solid ${T.border};border-radius:16px;box-shadow:0 16px 40px rgba(0,0,0,.4);display:flex;flex-direction:column;overflow:hidden;transition:transform 300ms cubic-bezier(.2,.8,.2,1),opacity 200ms ease}
+        .nm2-panel.closed{transform:translateX(calc(100% + 24px));opacity:0;pointer-events:none}
+        .nm2-has-panel .nm2-top{right:436px}
+        .nm2-fabs{position:absolute;top:12px;z-index:640;display:flex;flex-direction:column;gap:8px;transition:right 300ms cubic-bezier(.2,.8,.2,1)}
+        .nm2-layers{position:absolute;z-index:700;width:290px;background:${T.panel};border:1px solid ${T.border};border-radius:14px;box-shadow:0 16px 40px rgba(0,0,0,.45);padding:12px;animation:nm2-pop 220ms cubic-bezier(.34,1.4,.64,1) both}
+        @keyframes nm2-pop{from{opacity:0;transform:translateY(-6px) scale(.97)}to{opacity:1;transform:none}}
+        .nm2-switch{width:36px;height:21px;border-radius:999px;background:${T.panelAlt2};border:1px solid ${T.border};position:relative;flex-shrink:0;transition:background 180ms ease}
+        .nm2-switch::after{content:"";position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform 220ms cubic-bezier(.34,1.56,.64,1)}
+        .nm2-switch.on{background:${T.accent};border-color:${T.accent}}
+        .nm2-switch.on::after{transform:translateX(15px)}
+        .nm-map .leaflet-control-zoom{border:none!important;box-shadow:0 4px 14px rgba(0,0,0,.3)!important;border-radius:12px!important;overflow:hidden;margin:0 0 12px 12px!important}
+        .nm-map .leaflet-control-zoom a{width:36px!important;height:36px!important;line-height:36px!important}
+        @media (max-width:760px){
+          .nm2-wrap{height:calc(100dvh - 170px)!important;border-radius:14px!important}
+          .nm2-panel{top:auto;left:0;right:0;bottom:0;width:auto;border-radius:18px 18px 0 0;transition:height 320ms cubic-bezier(.2,.8,.2,1)}
+          .nm2-panel.closed{transform:none;opacity:1;pointer-events:auto}
+          .nm2-top,.nm2-has-panel .nm2-top{right:12px}
+          .nm-map .leaflet-control-zoom{display:none}
+          .nm2-fabs{right:12px!important;top:104px!important}
+          .nm2-layers{right:12px!important;left:12px;width:auto!important;top:104px!important}
+          .nm-map .leaflet-bottom{bottom:96px;z-index:500}
+        }
       `}</style>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-        <div style={{ fontSize: 12, color: T.textMuted }}>
-          {visible.length} de {equipamentos.length} equipamentos visíveis. Posição real (GPS) sobre imagem de satélite.
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button onClick={() => setShowAreaSummary(true)} style={{ ...ghost(), display: "flex", alignItems: "center", gap: 5 }}>
-            <FileSpreadsheet size={13} /> Resumo por área
-          </button>
-          <button onClick={exportCSV} disabled={visible.length === 0} style={{ ...ghost(), display: "flex", alignItems: "center", gap: 5, opacity: visible.length === 0 ? .5 : 1 }}>
-            <Download size={13} /> Exportar CSV
-          </button>
-          <button onClick={() => setShowAddForm(true)} style={{ ...ghost(), display: "flex", alignItems: "center", gap: 5 }}>
-            <Plus size={13} /> Adicionar equipamento
-          </button>
-        </div>
-      </div>
+      <div className={panelOpen ? "nm2-has-panel" : ""} style={{ position: "absolute", inset: 0 }}>
+        <div ref={mapElRef} className="nm-map" style={{ position: "absolute", inset: 0 }} />
 
-      {/* Busca por nome/área — acha um ponto específico entre os ~87 sem
-          precisar navegar/dar zoom manualmente; ao escolher um resultado o
-          mapa "voa" até ele e já seleciona, mesmo se estiver fora do filtro
-          de tipo/área ativo no momento. */}
-      <div style={{ position: "relative" }}>
-        <div style={{ position: "relative" }}>
-          <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: T.textFaint, pointerEvents: "none" }} />
-          <input
-            value={search}
-            onChange={e => { setSearch(e.target.value); setSearchOpen(true); }}
-            onFocus={() => setSearchOpen(true)}
-            onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
-            placeholder="Buscar equipamento por nome ou área..."
-            style={{ ...inp({ marginBottom: 0 }), paddingLeft: 30 }}
-          />
-        </div>
-        {searchOpen && search.trim() && (
-          <div style={{
-            position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 500,
-            background: T.panel, border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden",
-            boxShadow: "0 8px 24px rgba(0,0,0,.25)", maxHeight: 260, overflowY: "auto",
-          }}>
-            {searchMatches.length === 0 && (
-              <div style={{ padding: "10px 12px", fontSize: 12, color: T.textFaint }}>Nenhum equipamento encontrado.</div>
+        {/* busca + filtros */}
+        <div className="nm2-top">
+          <div style={{ position: "relative", maxWidth: 440, zIndex: 2 }}>
+            <Search size={15} style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)", color: "#94a3b8", pointerEvents: "none", zIndex: 1 }} />
+            <input
+              value={search} onChange={e => { setSearch(e.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
+              placeholder="Buscar equipamento, área, MAC ou IP…"
+              style={{ width: "100%", boxSizing: "border-box", padding: "11px 36px 11px 38px", borderRadius: 12, border: "1px solid rgba(255,255,255,.18)", background: "rgba(15,17,26,.82)", color: "#fff", fontSize: 13, fontFamily: "inherit", outline: "none", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", boxShadow: "0 4px 14px rgba(0,0,0,.3)" }}
+            />
+            {search && <button onClick={() => setSearch("")} aria-label="Limpar busca" style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#94a3b8", cursor: "pointer", display: "flex", padding: 4 }}><X size={15} /></button>}
+            {searchOpen && search.trim() && (
+              <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: T.panel, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 12px 30px rgba(0,0,0,.4)", maxHeight: 300, overflowY: "auto", animation: "nm2-pop 200ms ease both" }}>
+                {searchMatches.length === 0 && <div style={{ padding: "12px 14px", fontSize: 12, color: T.textFaint }}>Nada encontrado.</div>}
+                {searchMatches.map(e => {
+                  const info = EQUIP_TIPO[e.tipo] || EQUIP_TIPO.outro;
+                  return (
+                    <button key={keyOf(e)} onMouseDown={ev => ev.preventDefault()} onClick={() => { select(e); setSearch(""); setSearchOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 12px", background: "none", border: "none", borderBottom: `1px solid ${T.borderSoft}`, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+                      <span style={{ width: 24, height: 24, borderRadius: "50%", background: info.color, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }} dangerouslySetInnerHTML={{ __html: TIPO_ICON[e.tipo] || TIPO_ICON.outro }} />
+                      <span style={{ minWidth: 0, flex: 1 }}>
+                        <span style={{ display: "block", fontSize: 12.5, fontWeight: 700, color: T.textBright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.name}</span>
+                        <span style={{ fontSize: 11, color: T.textFaint }}>{info.label} · {e.area}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             )}
-            {searchMatches.map(e => {
-              const info = EQUIP_TIPO[e.tipo] || EQUIP_TIPO.outro;
+          </div>
+          <div className="nm2-chips">
+            {[["todas", "Todos", "#64748b"], ["veicular", CATEGORIAS.veicular.short, CATEGORIAS.veicular.color], ["materiais", CATEGORIAS.materiais.short, CATEGORIAS.materiais.color]].map(([k, l, c]) => (
+              <button key={k} onClick={() => setCat(k)} className="tk-chip-btn" style={chip(cat === k, c)} title={k === "todas" ? "Todos os equipamentos" : `Só totens de ${CATEGORIAS[k].label.toLowerCase()}`}>{l}</button>
+            ))}
+            <span style={{ width: 1, background: "rgba(255,255,255,.2)", margin: "4px 2px", flexShrink: 0 }} />
+            {tiposPresentes.map(t => {
+              const info = EQUIP_TIPO[t] || EQUIP_TIPO.outro, on = tipos.has(t);
               return (
-                <button key={e._i} onMouseDown={ev => ev.preventDefault()} onClick={() => focusEquipamento(e)} style={{
-                  display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 12px", background: "none",
-                  border: "none", borderBottom: `1px solid ${T.border}`, cursor: "pointer", textAlign: "left", fontFamily: "inherit",
-                }}>
-                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: info.color, flexShrink: 0 }} />
-                  <span style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: T.textBright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.name}</div>
-                    <div style={{ fontSize: 10.5, color: T.textFaint }}>{info.label} · {e.area}</div>
-                  </span>
+                <button key={t} onClick={() => toggleTipo(t)} className="tk-chip-btn" style={{ ...chip(on, info.color), opacity: on ? 1 : .75 }}>
+                  <span style={{ width: 16, height: 16, borderRadius: "50%", background: on ? "rgba(255,255,255,.25)" : info.color, display: "flex", alignItems: "center", justifyContent: "center" }} dangerouslySetInnerHTML={{ __html: TIPO_ICON[t].replace('width="16" height="16"', 'width="10" height="10"') }} />
+                  {info.label}
                 </button>
               );
             })}
           </div>
-        )}
-      </div>
-
-      {/* Legenda / filtro por tipo */}
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {TIPO_ORDER.filter(t => equipamentos.some(e => e.tipo === t)).map(tipo => {
-          const info = EQUIP_TIPO[tipo] || EQUIP_TIPO.outro;
-          const active = tiposAtivos.has(tipo);
-          const count = equipamentos.filter(e => e.tipo === tipo).length;
-          return (
-            <button key={tipo} onClick={() => toggleTipo(tipo)} style={{
-              display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 6,
-              border: `1px solid ${active ? info.color : T.border}`, background: active ? `${info.color}18` : T.panel,
-              color: active ? info.color : T.textFaint, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
-            }}>
-              <span style={{ width: 7, height: 7, borderRadius: "50%", background: info.color, flexShrink: 0, opacity: active ? 1 : .4 }} />
-              {info.label} <span style={{ opacity: .7 }}>({count})</span>
-            </button>
-          );
-        })}
-        <select value={areaFiltro} onChange={e => setAreaFiltro(e.target.value)} style={{ ...inp({ width: "auto", marginBottom: 0 }), fontSize: 11, padding: "5px 8px" }}>
-          <option value="Todas">Todas as áreas</option>
-          {areas.map(a => <option key={a}>{a}</option>)}
-        </select>
-      </div>
-
-      {adding && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "9px 14px", borderRadius: 7, background: `${T.accent}14`, border: `1px solid ${T.accent}40` }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: T.accent }}>Clique no mapa para posicionar "{adding.name}"</span>
-          <button onClick={() => setAdding(null)} style={ghost()}>Cancelar</button>
         </div>
-      )}
 
-      <div
-        ref={mapElRef}
-        className="nm-map nm-map-canvas"
-        style={{
-          position: "relative", width: "100%", height: 640, borderRadius: 10,
-          border: `1px solid ${adding ? T.accent : T.border}`, overflow: "hidden", background: T.input,
-        }}
-      />
+        {/* botões flutuantes */}
+        <div className="nm2-fabs" style={{ right: panelOpen ? 384 : 12 }}>
+          <button onClick={() => setShowLayers(s => !s)} title="Camadas" aria-label="Camadas" style={{ ...fab, background: showLayers ? T.accent : fab.background }}>
+            <Layers size={18} />
+            {camadasAtivas > 0 && <span style={{ position: "absolute", top: -4, right: -4, minWidth: 16, height: 16, borderRadius: 8, background: T.accent, border: "2px solid #fff", fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{camadasAtivas}</span>}
+          </button>
+          <button onClick={recentrar} title="Ver a planta toda" aria-label="Ver a planta toda" style={fab}><Crosshair size={18} /></button>
+          <button onClick={() => setForm({ modo: "novo" })} title="Adicionar equipamento" aria-label="Adicionar equipamento" style={fab}><Plus size={18} /></button>
+          <button onClick={exportCSV} title="Exportar planilha (CSV)" aria-label="Exportar CSV" style={fab}><Download size={17} /></button>
+          {onOpenCadastros && <button onClick={onOpenCadastros} title="Cadastros (locais e categorias)" aria-label="Cadastros" style={fab}><Tags size={17} /></button>}
+        </div>
 
-      {sel && (
-        <div style={{ padding: "11px 14px", borderRadius: 8, background: T.panelAlt, border: `1px solid ${T.border}` }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-          <div style={{ minWidth: 0, flex: "1 1 180px", display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ width: 9, height: 9, borderRadius: "50%", background: (EQUIP_TIPO[sel.tipo] || EQUIP_TIPO.outro).color, flexShrink: 0 }} />
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 700, color: T.textBright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sel.name}</div>
-              <div style={{ fontSize: 10.5, color: T.textFaint }}>{(EQUIP_TIPO[sel.tipo] || EQUIP_TIPO.outro).label} · {sel.area}</div>
+        {showLayers && (
+          <>
+            <div onClick={() => setShowLayers(false)} style={{ position: "absolute", inset: 0, zIndex: 690 }} />
+            <div className="nm2-layers" style={{ top: 12, right: (panelOpen ? 384 : 12) + 50 }}>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
+                <b style={{ fontSize: 13, color: T.textBright, flex: 1 }}>Camadas</b>
+                <button onClick={() => { Object.entries(LAYERS_DEFAULT).forEach(([k, v]) => setLayer(k, v)); }} style={{ background: "none", border: "none", color: T.textMuted, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Padrão</button>
+                <button onClick={() => { ["nomes", "alcance", "ligacoes", "ocorrencias"].forEach(k => setLayer(k, false)); }} style={{ background: "none", border: "none", color: T.accent, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Deixar limpo</button>
+              </div>
+              {LAYER_INFO.map(([k, l, d]) => (
+                <div key={k}>
+                  <button onClick={() => setLayer(k, !layers[k])} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 2px", background: "none", border: "none", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block", fontSize: 12.5, fontWeight: 700, color: T.text }}>{l}</span>
+                      <span style={{ fontSize: 11, color: T.textFaint }}>{d}</span>
+                    </span>
+                    <span className={`nm2-switch${layers[k] ? " on" : ""}`} />
+                  </button>
+                  {k === "alcance" && (layers.alcance || layers.ligacoes) && (
+                    <div style={{ padding: "2px 2px 8px", display: "flex", alignItems: "center", gap: 10 }}>
+                      <input type="range" min={30} max={300} step={10} value={raio} onChange={e => setRaio(Number(e.target.value))} style={{ flex: 1, accentColor: T.accent }} aria-label="Raio do alcance" />
+                      <b style={{ fontSize: 12, color: T.textBright, width: 48, textAlign: "right" }}>{raio} m</b>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
-          </div>
-          <div style={{ display: "flex", gap: 6, flexShrink: 0, marginLeft: "auto" }}>
-            <a href={`https://www.google.com/maps?q=${sel.lat},${sel.lng}`} target="_blank" rel="noopener noreferrer" style={{ ...ghost(), display: "inline-flex", alignItems: "center", gap: 5, textDecoration: "none" }}>
-              <ExternalLink size={12} /> Ver GPS
-            </a>
-            {sel.id != null && (
-              <button onClick={() => { onRemoveEquipamento(sel.id, sel.name); setSelected(null); }} style={{ ...ghost(), color: "#ef4444", borderColor: "#ef444440" }}>Remover</button>
-            )}
-            <button onClick={() => setSelected(null)} aria-label="Fechar" style={{ background: "none", border: "none", color: T.textFaint, cursor: "pointer", padding: 4 }}><X size={16} /></button>
-          </div>
-        </div>
-        {sel.id != null && sb && (
-          <OcorrenciasDoEquipamento T={T} lista={ocorrencias.filter(o => o.equipamento_id === sel.id)} onStatus={mudarStatus} onNova={() => setFormOcorr(sel)} />
+          </>
         )}
-        </div>
-      )}
 
-      {sb && (
-        <OcorrenciasPanel T={T} ocorrencias={ocorrencias} equipById={equipById} destacar={destacar} setDestacar={setDestacar} onStatus={mudarStatus} onFocus={focarPorEquip} />
-      )}
+        {adding && (
+          <div style={{ position: "absolute", left: "50%", bottom: 90, transform: "translateX(-50%)", zIndex: 700, display: "flex", alignItems: "center", gap: 10, padding: "10px 12px 10px 16px", borderRadius: 999, background: T.accent, color: "#fff", boxShadow: "0 8px 24px rgba(0,0,0,.4)", fontSize: 12.5, fontWeight: 700, whiteSpace: "nowrap", animation: "nm2-pop 220ms ease both" }}>
+            Toque no mapa para posicionar “{adding.name}”
+            <button onClick={() => setAdding(null)} style={{ background: "rgba(255,255,255,.22)", border: "none", color: "#fff", borderRadius: 999, padding: "5px 10px", cursor: "pointer", fontFamily: "inherit", fontWeight: 700 }}>Cancelar</button>
+          </div>
+        )}
+
+        {/* painel (desktop) / gaveta (celular) */}
+        <div className={`nm2-panel${panelOpen ? "" : " closed"}`} style={{ height: undefined }} data-sheet={sheet}>
+          <style>{`@media (max-width:760px){.nm2-panel[data-sheet="min"]{height:96px}.nm2-panel[data-sheet="mid"]{height:52%}.nm2-panel[data-sheet="max"]{height:88%}}`}</style>
+          <button className="nm2-sheet-handle" onClick={() => setSheet(s => (s === "min" ? "mid" : s === "mid" ? "max" : "min"))} aria-label="Abrir ou fechar painel"
+            style={{ display: "none", width: "100%", padding: "8px 0 2px", background: "none", border: "none", cursor: "pointer", flexDirection: "column", alignItems: "center", gap: 2, color: T.textFaint }}>
+            <span style={{ width: 40, height: 4, borderRadius: 2, background: T.border }} />
+            {sheet === "max" ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+          </button>
+          <style>{`@media (max-width:760px){.nm2-sheet-handle{display:flex!important}.nm2-desk-close{display:none!important}}`}</style>
+          <SidePanel {...panelProps} onHidePanel={() => setPanelOpen(false)} compact={sheet === "min"} onExpand={() => setSheet("mid")} />
+        </div>
+        {!panelOpen && (
+          <button className="nm2-desk-close" onClick={() => setPanelOpen(true)} style={{ ...fab, position: "absolute", right: 12, bottom: 100, width: "auto", padding: "0 14px", gap: 6, fontSize: 12, fontWeight: 700, fontFamily: "inherit", zIndex: 640 }}>Painel</button>
+        )}
+      </div>
 
       {formOcorr && <OcorrenciaForm T={T} equipamento={formOcorr} onSave={salvarOcorrencia} onClose={() => setFormOcorr(null)} />}
-
-      {showAddForm && (
-        <Overlay T={T} onClose={() => setShowAddForm(false)}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: T.textBright }}>Adicionar equipamento</h3>
-            <button onClick={() => setShowAddForm(false)} aria-label="Fechar" style={{ background: "none", border: "none", color: T.textFaint, cursor: "pointer", padding: 4 }}><X size={18} /></button>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <input value={addForm.name} onChange={e => setAddForm(p => ({ ...p, name: e.target.value }))} placeholder="Nome (ex.: totem113/114 - L2000 - Porta 5)" style={inp()} />
-            <select value={addForm.tipo} onChange={e => setAddForm(p => ({ ...p, tipo: e.target.value }))} style={inp()}>
-              {TIPO_ORDER.map(t => <option key={t} value={t}>{(EQUIP_TIPO[t] || EQUIP_TIPO.outro).label}</option>)}
-            </select>
-            <input value={addForm.area} onChange={e => setAddForm(p => ({ ...p, area: e.target.value }))} placeholder="Área (ex.: Fundição 1, TP, Vias...)" style={inp()} list="network-areas" />
-            <datalist id="network-areas">{areas.map(a => <option key={a} value={a} />)}</datalist>
-            <button onClick={startAdd} style={{ ...btn(T.accent), marginTop: 4 }}>Posicionar no mapa</button>
-          </div>
-        </Overlay>
-      )}
-
-      {showAreaSummary && (
-        <Overlay T={T} onClose={() => setShowAreaSummary(false)}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: T.textBright }}>Resumo por área</h3>
-            <button onClick={() => setShowAreaSummary(false)} aria-label="Fechar" style={{ background: "none", border: "none", color: T.textFaint, cursor: "pointer", padding: 4 }}><X size={18} /></button>
-          </div>
-          <div style={{ fontSize: 11.5, color: T.textFaint, marginBottom: 12 }}>Quantidade de cada tipo de equipamento cadastrado em cada área do Mapa.</div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", padding: "6px 10px 6px 0", color: T.textFaint, fontWeight: 600, borderBottom: `1px solid ${T.border}`, whiteSpace: "nowrap" }}>Área</th>
-                  {tiposPresentes.map(t => (
-                    <th key={t} style={{ textAlign: "center", padding: "6px 10px", color: (EQUIP_TIPO[t] || EQUIP_TIPO.outro).color, fontWeight: 700, borderBottom: `1px solid ${T.border}`, whiteSpace: "nowrap" }}>
-                      {(EQUIP_TIPO[t] || EQUIP_TIPO.outro).label}
-                    </th>
-                  ))}
-                  <th style={{ textAlign: "center", padding: "6px 0 6px 10px", color: T.textFaint, fontWeight: 600, borderBottom: `1px solid ${T.border}` }}>Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {areaSummary.map(row => (
-                  <tr key={row.area}>
-                    <td style={{ padding: "7px 10px 7px 0", color: T.textBright, fontWeight: 600, borderBottom: `1px solid ${T.border}`, whiteSpace: "nowrap" }}>{row.area}</td>
-                    {tiposPresentes.map(t => (
-                      <td key={t} style={{ textAlign: "center", padding: "7px 10px", color: row.counts[t] ? T.text : T.textFaint, borderBottom: `1px solid ${T.border}` }}>
-                        {row.counts[t] || "–"}
-                      </td>
-                    ))}
-                    <td style={{ textAlign: "center", padding: "7px 0 7px 10px", color: T.textBright, fontWeight: 700, borderBottom: `1px solid ${T.border}` }}>{row.total}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Overlay>
-      )}
-
-      {equipamentos.length === 0 && (
-        <div style={{ textAlign: "center", padding: 24, fontSize: 12, color: T.textFaint, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-          <MapPin size={20} /> Nenhum equipamento cadastrado ainda.
-        </div>
+      {form && (
+        <EquipForm
+          T={T} inp={inp} ghost={ghost} modo={form.modo} equip={form.equip} areas={[...new Set(equipamentos.map(e => e.area))].sort()}
+          onClose={() => setForm(null)}
+          onSave={(dados) => {
+            if (form.modo === "novo") { setAdding(dados); showToast?.("Agora toque no mapa onde ele fica", "info"); }
+            else onUpdateEquipamento?.(form.equip.id, dados);
+            setForm(null);
+          }}
+        />
       )}
     </div>
   );

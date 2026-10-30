@@ -10,7 +10,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   ArrowLeft, Users, Loader, Flag, CalendarDays, Tag, FolderKanban, CornerLeftUp, UserPen, AlignLeft, ListChecks,
-  ListTree, Paperclip, MessageSquare, History, Trash2, Plus, X, FileText, Send, ChevronDown, ChevronRight, ClipboardCheck,
+  ListTree, Paperclip, MessageSquare, History, Trash2, Plus, X, FileText, Send, ChevronDown, ChevronRight, ClipboardCheck, MapPin,
 } from "lucide-react";
 import { makeStyleHelpers } from "../../theme.js";
 import { TASK_STATUS, TASK_PRIORITY } from "../../constants.js";
@@ -88,7 +88,7 @@ function describeHistory(h) {
 const isImage = (a) => (a.tipo || "").startsWith("image/");
 const fmtSize = (b) => (b > 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
 
-export function TaskPage({ T, task, tasks, projects, team, currentUser, myUid, isAdmin, api, showToast, onOpenTask, onOpenProject, onBack }) {
+export function TaskPage({ T, task, tasks, projects, team, currentUser, myUid, isAdmin, api, showToast, onOpenTask, onOpenProject, onBack, equipamentos = [], onOpenEquip }) {
   const { inp, btn, ghost } = makeStyleHelpers(T);
   const ghostInp = (ex = {}) => inp({ padding: "7px 8px", fontSize: 13, ...ex });
 
@@ -295,6 +295,15 @@ export function TaskPage({ T, task, tasks, projects, team, currentUser, myUid, i
               <option value="">Vazio</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
             </select>
+          </div>
+        </Prop>
+        <Prop icon={MapPin} label="Equipamento">
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <select value={task.equipamento_id || ""} onChange={e => save({ equipamento_id: e.target.value ? Number(e.target.value) : null })} className="tk-ghost-input" style={ghostInp({ flex: 1, minWidth: 0, color: task.equipamento_id ? T.text : T.textFaint })} aria-label="Equipamento">
+              <option value="">Vazio</option>
+              {[...equipamentos].filter(e => e.id != null).sort((a, b) => a.area.localeCompare(b.area) || a.name.localeCompare(b.name)).map(e => <option key={e.id} value={e.id}>{e.area} · {e.name}</option>)}
+            </select>
+            {task.equipamento_id && onOpenEquip && <button onClick={() => onOpenEquip(task.equipamento_id)} title="Ver no mapa" className="tk-nav-btn" style={{ ...ghost(), padding: "5px 9px", display: "flex", alignItems: "center", gap: 4, fontSize: 11.5 }}><MapPin size={13} /> Mapa</button>}
           </div>
         </Prop>
         <Prop icon={CornerLeftUp} label="Tarefa principal">

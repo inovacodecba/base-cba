@@ -340,7 +340,7 @@ function applyFilters(tasks, { q, filters, currentUser, tab }) {
   });
 }
 
-export function Tarefas({ T, tasks, projects, team, currentUser, myUid, isAdmin, api, showToast }) {
+export function Tarefas({ T, tasks, projects, team, currentUser, myUid, isAdmin, api, showToast, jumpTo, equipamentos, onOpenEquip }) {
   const { inp, btn, ghost } = makeStyleHelpers(T);
   const lbl = (children) => <div style={{ fontSize: 10, fontWeight: 700, color: T.textFaint, marginBottom: 3, textTransform: "uppercase", letterSpacing: .6 }}>{children}</div>;
 
@@ -367,6 +367,8 @@ export function Tarefas({ T, tasks, projects, team, currentUser, myUid, isAdmin,
   useEffect(() => { window.scrollTo({ top: 0 }); document.querySelector("main")?.scrollTo?.({ top: 0 }); }, [openTaskId, openProjectId]);
 
   const goTask = (id) => setOpenTaskId(id);
+  // Vindo de outra tela (ex.: ficha do equipamento no Mapa): abre a tarefa direto.
+  useEffect(() => { if (jumpTo?.id != null) { setOpenProjectId(null); setOpenTaskId(jumpTo.id); } }, [jumpTo]);
   const goProject = (id) => { setOpenTaskId(null); setOpenProjectId(id); };
 
   const projectsById = useMemo(() => Object.fromEntries(projects.map(p => [p.id, p])), [projects]);
@@ -415,7 +417,7 @@ export function Tarefas({ T, tasks, projects, team, currentUser, myUid, isAdmin,
         <TaskPage
           T={T} task={openTask} tasks={tasks} projects={projects} team={team} currentUser={currentUser} myUid={myUid} isAdmin={isAdmin}
           api={api} showToast={showToast} onOpenTask={goTask} onOpenProject={goProject}
-          onBack={() => setOpenTaskId(null)}
+          onBack={() => setOpenTaskId(null)} equipamentos={equipamentos} onOpenEquip={onOpenEquip}
         />
       </div>
     );

@@ -886,10 +886,10 @@ export default function App() {
   // Importados uma vez do Google My Maps do usuário (KML). Diferente de
   // `items`, não têm quantidade/estoque — são instalações fixas (posição
   // GPS real), então o CRUD aqui é só nome/tipo/área/posição.
-  const addEquipamento = async ({ name, tipo, area, lat, lng }) => {
+  const addEquipamento = async ({ name, tipo, area, lat, lng, categorias = [], dados = {} }) => {
     try {
-      const [row] = await sb("equipamentos_rede", "POST", { name, tipo, area, lat, lng }) || [];
-      setEquipamentos(p => [...p, row || { name, tipo, area, lat, lng }]);
+      const [row] = await sb("equipamentos_rede", "POST", { name, tipo, area, lat, lng, categorias, dados }) || [];
+      setEquipamentos(p => [...p, row || { name, tipo, area, lat, lng, categorias, dados }]);
       showToast(`"${name}" adicionado ao mapa`);
     } catch {
       // Tabela ainda não existe (migração não rodada) — adiciona só localmente
@@ -898,6 +898,25 @@ export default function App() {
       showToast(`"${name}" adicionado (rode a migração do Supabase para salvar de verdade)`, "warn");
     }
   };
+  // Editar dados/posição de um equipamento (Mapa v2: ficha → Editar / Mudar posição).
+  const updateEquipamento = async (id, patch) => {
+    const before = equipamentos.find(e => e.id === id);
+    const body = { ...patch, updated_at: new Date().toISOString() };
+    setEquipamentos(p => p.map(e => e.id === id ? { ...e, ...body } : e));
+    try {
+      await sb(`equipamentos_rede?id=eq.${id}`, "PATCH", body);
+      showToast(patch.lat != null && patch.name == null ? "Posição atualizada" : "Equipamento atualizado");
+    } catch (e) {
+      if (before) setEquipamentos(p => p.map(x => x.id === id ? before : x));
+      showToast(`Erro ao salvar: ${e.message}`, "err");
+    }
+  };
+  // Abrir uma tarefa a partir de outra tela (ex.: ficha do equipamento no Mapa).
+  const [taskJump, setTaskJump] = useState(null);
+  const openTaskFromAnywhere = (id) => { setTaskJump({ id, n: Date.now() }); setView("tarefas"); };
+  // E o caminho de volta: tarefa → equipamento no Mapa.
+  const [equipJump, setEquipJump] = useState(null);
+  const openEquipFromAnywhere = (id) => { setEquipJump({ id, n: Date.now() }); setView("mapa"); };
   const removeEquipamento = (id, name) => askConfirm(`Remover "${name}" do mapa?`, async () => {
     await sb(`equipamentos_rede?id=eq.${id}`, "DELETE");
     setEquipamentos(p => p.filter(e => e.id !== id));
@@ -1750,11 +1769,6 @@ export default function App() {
           {/* MAPA */}
           {view === "mapa" && (
             <>
-              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
-                <button onClick={() => setModal({ type: "cadastros", tab: "locais" })} style={{ ...ghost(), display: "flex", alignItems: "center", gap: 6 }}>
-                  <Tags size={13} /> Cadastros
-                </button>
-              </div>
               <Suspense fallback={
                 <div style={{ height: 640, borderRadius: 10, border: `1px solid ${T.border}`, background: T.input, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: T.textFaint }}>
                   Carregando mapa…
@@ -1766,6 +1780,13 @@ export default function App() {
                   equipamentos={equipamentos}
                   onAddEquipamento={addEquipamento}
                   onRemoveEquipamento={removeEquipamento}
+                  onUpdateEquipamento={updateEquipamento}
+                  onOpenCadastros={() => setModal({ type: "cadastros", tab: "locais" })}
+                  tasks={tasks}
+                  onCreateTask={taskApi.createTask}
+                  onOpenTask={openTaskFromAnywhere}
+                  focusEquip={equipJump}
+                  currentUser={currentUser}
                   showToast={showToast}
                 />
               </Suspense>
@@ -1797,6 +1818,9 @@ export default function App() {
               myUid={myUid}
               isAdmin={isAdminUser}
               api={taskApi}
+              jumpTo={taskJump}
+              equipamentos={equipamentos}
+              onOpenEquip={openEquipFromAnywhere}
               showToast={showToast}
             />
           )}
