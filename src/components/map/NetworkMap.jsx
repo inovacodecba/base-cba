@@ -20,7 +20,7 @@
 // Satélite: Esri World Imagery ao vivo (sem chave, só atribuição) — ver
 // satelliteMap.js. Leaflet é carregado sob demanda (lazy, no App.jsx).
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
-import { Search, X, Layers, Plus, Crosshair, Download, Tags, ChevronUp, ChevronDown } from "lucide-react";
+import { Search, X, Layers, Plus, Minus, Crosshair, Download, Tags, ChevronUp, ChevronDown, MapPinPlus } from "lucide-react";
 import L from "leaflet";
 import { makeStyleHelpers } from "../../theme.js";
 import { EQUIP_TIPO } from "../../constants.js";
@@ -136,7 +136,6 @@ export function NetworkMap({ T, sb, equipamentos, onAddEquipamento, onRemoveEqui
   // ── mapa: cria uma vez ──
   useEffect(() => {
     const map = createSatelliteMap(mapElRef.current, T, { zoomControl: false });
-    L.control.zoom({ position: "bottomleft" }).addTo(map);
     map.setView(PLANT_CENTER, 16);
     pinsLayerRef.current = L.layerGroup().addTo(map);
     overlayLayerRef.current = L.layerGroup().addTo(map);
@@ -296,7 +295,7 @@ export function NetworkMap({ T, sb, equipamentos, onAddEquipamento, onRemoveEqui
   };
 
   return (
-    <div ref={wrapRef} className="nm2-wrap" style={{ position: "relative", width: "100%", height: "calc(100dvh - 150px)", minHeight: 520, borderRadius: 16, overflow: "hidden", border: `1px solid ${adding ? T.accent : T.border}`, background: T.input }}>
+    <div ref={wrapRef} className="nm2-wrap" style={{ position: "relative", width: "100%", height: "calc(100dvh - 120px)", minHeight: 440, borderRadius: 16, overflow: "hidden", border: `1px solid ${adding ? T.accent : T.border}`, background: T.input }}>
       <style>{`
         ${satelliteMapCss(T, "nm-map")}
         .nm-map-tooltip{font-size:11px;font-weight:700;padding:3px 7px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.3)}
@@ -396,8 +395,12 @@ export function NetworkMap({ T, sb, equipamentos, onAddEquipamento, onRemoveEqui
             <Layers size={18} />
             {camadasAtivas > 0 && <span style={{ position: "absolute", top: -4, right: -4, minWidth: 16, height: 16, borderRadius: 8, background: T.accent, border: "2px solid #fff", fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{camadasAtivas}</span>}
           </button>
+          <div style={{ display: "flex", flexDirection: "column", borderRadius: 12, overflow: "hidden", boxShadow: fab.boxShadow }}>
+            <button onClick={() => mapRef.current?.zoomIn()} title="Aproximar" aria-label="Aproximar" style={{ ...fab, borderRadius: 0, boxShadow: "none", borderBottom: "none" }}><Plus size={19} /></button>
+            <button onClick={() => mapRef.current?.zoomOut()} title="Afastar" aria-label="Afastar" style={{ ...fab, borderRadius: 0, boxShadow: "none" }}><Minus size={19} /></button>
+          </div>
           <button onClick={recentrar} title="Ver a planta toda" aria-label="Ver a planta toda" style={fab}><Crosshair size={18} /></button>
-          <button onClick={() => setForm({ modo: "novo" })} title="Adicionar equipamento" aria-label="Adicionar equipamento" style={fab}><Plus size={18} /></button>
+          <button onClick={() => setForm({ modo: "novo" })} title="Adicionar equipamento" aria-label="Adicionar equipamento" style={fab}><MapPinPlus size={18} /></button>
           <button onClick={exportCSV} title="Exportar planilha (CSV)" aria-label="Exportar CSV" style={fab}><Download size={17} /></button>
           {onOpenCadastros && <button onClick={onOpenCadastros} title="Cadastros (locais e categorias)" aria-label="Cadastros" style={fab}><Tags size={17} /></button>}
         </div>
